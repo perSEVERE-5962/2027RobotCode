@@ -1,0 +1,5 @@
+# .github/CODEOWNERS
+
+# Repository configuration and GitHub Actions
+/.github/                         @perSEVERE-5962/admins 
+/.github/workflows/               @perSEVERE-5962/admins 

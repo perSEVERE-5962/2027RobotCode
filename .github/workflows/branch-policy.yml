@@ -1,0 +1,24 @@
+name: Branch Policy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  branch-policy:
+    name: Branch Policy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Enforce branch flow
+        run: |
+          echo "Source: ${{ github.head_ref }}"
+          echo "Target: ${{ github.base_ref }}"
+
+          if [[ "${{ github.base_ref }}" == "main" && \
+                "${{ github.head_ref }}" != "integration" ]]; then
+            echo "❌ Only integration can merge into main."
+            exit 1
+          fi
+
+          echo "✅ Branch flow is valid."
