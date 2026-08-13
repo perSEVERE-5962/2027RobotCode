@@ -2,8 +2,16 @@ name: Branch Policy
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: 
+      - assigned
+      - opened
+      - synchronize
+      - reopened
+      - edited
 
+permissions:
+  contents: read
+  
 jobs:
   branch-policy:
     name: Branch Policy

@@ -1,0 +1,32 @@
+name: Spotless Check
+
+on:
+  pull_request:
+    types: 
+      - opened
+      - ready_for_review
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - main
+      - integration
+      
+permissions:
+  contents: read
+  
+jobs:
+  spotless:
+    name: Spotless
+    runs-on: ubuntu-latest
+    container: wpilib/roborio-cross-ubuntu:2024-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fix gradlew permissions
+        run: chmod +x ./gradlew
+
+      - name: Spotless check
+        run: ./gradlew spotlessCheck --no-daemon
