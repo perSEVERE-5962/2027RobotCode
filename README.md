@@ -16,7 +16,7 @@ Our repository follows a simple promotion model:
 
 **Feature branches → `integration` → `main`**
 
-Students develop features on their own branches and submit pull requests to `integration`. After changes have been integrated and tested, `integration` is promoted to `main`.
+Students develop features on their own branches created off of `integration` and submit pull requests to `integration`. After changes have been integrated and tested, `integration` is promoted to `main`.
 
 `main` represents the code ready for competition
 
