@@ -19,14 +19,11 @@ jobs:
   spotless:
     name: Spotless
     runs-on: ubuntu-latest
-    container: wpilib/roborio-cross-ubuntu:2024-22.04
-
+    container: wpilib/systemcore-cross-ubuntu:2027-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Fix gradlew permissions
         run: chmod +x ./gradlew
-
       - name: Spotless check
         run: ./gradlew spotlessCheck --no-daemon
