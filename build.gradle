@@ -7,8 +7,12 @@ plugins {
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_25
-    targetCompatibility = JavaVersion.VERSION_25
+    // Toolchain rather than sourceCompatibility: Gradle provisions JDK 25 itself
+    // (via the foojay resolver in settings.gradle), so a fresh clone builds on any
+    // machine regardless of which JDK is on PATH.
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
 }
 
 def ROBOT_MAIN_CLASS = "first.Main"
