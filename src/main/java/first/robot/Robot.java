@@ -23,6 +23,9 @@ public class Robot extends LoggedRobot {
           default -> "Unknown";
         });
 
+    // Resolve before Logger.start so the identity lands in the log metadata
+    Logger.recordMetadata("RobotIdentity", RobotIdentity.resolve().toString());
+
     // Set up data receivers & replay source
     switch (Constants.currentMode) {
       case REAL:
