@@ -93,6 +93,13 @@ dependencies {
 test {
     useJUnitPlatform()
     systemProperty 'junit.jupiter.extensions.autodetection.enabled', 'true'
+
+    // GradleRIO injects these for sim and deploy but not for tests. The add-opens pair is what
+    // v3 continuations need; without them any test touching a command dies in
+    // ExceptionInInitializerError at class load. enable-native-access covers the JNI loads.
+    jvmArgs '--add-opens', 'java.base/jdk.internal.vm=ALL-UNNAMED',
+            '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
+            '--enable-native-access=ALL-UNNAMED'
 }
 
 // Simulation configuration (e.g. environment variables).
