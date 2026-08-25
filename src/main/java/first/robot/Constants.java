@@ -2,14 +2,15 @@ package first.robot;
 
 import org.wpilib.framework.RobotBase;
 
-/**
- * This class defines the runtime mode used by AdvantageKit. The mode is always "real" when running
- * on a roboRIO. Change the value of "simMode" to switch between "sim" (physics sim) and "replay"
- * (log replay from a file).
- */
 public final class Constants {
-  public static final Mode simMode = Mode.SIM;
-  public static final Mode currentMode = RobotBase.isReal() ? Mode.REAL : simMode;
+  /**
+   * This field defines the runtime mode used by AdvantageKit. The mode is always "real" when
+   * running on a Systemcore. Change the value to switch between "sim" (physics sim) and "replay"
+   * (log replay from a file).
+   */
+  public static final Mode SIM_MODE = Mode.SIM;
+
+  public static final Mode CURRENT_MODE = RobotBase.isReal() ? Mode.REAL : SIM_MODE;
 
   public static enum Mode {
     /** Running on a real robot. */
@@ -21,4 +22,6 @@ public final class Constants {
     /** Replaying from a log file. */
     REPLAY
   }
+
+  public static final double LOOP_TIME_S = 0.02;
 }
