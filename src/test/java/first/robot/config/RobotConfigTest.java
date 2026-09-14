@@ -33,7 +33,7 @@ class RobotConfigTest {
     assertCorner(drive.modules().get(1), "FrontRight", 20, 21, OptionalInt.of(22), 0.3, -0.3);
     assertCorner(drive.modules().get(2), "BackLeft", 30, 31, OptionalInt.of(32), -0.3, 0.3);
     assertCorner(drive.modules().get(3), "BackRight", 40, 41, OptionalInt.of(42), -0.3, -0.3);
-    assertEquals(0, drive.gyroBusId());
+    assertEquals(2, drive.gyroBusId());
     assertEquals(50, drive.gyroCanId());
     assertEquals(0.0508, drive.wheelRadiusMeters());
     assertEquals(6.75, drive.driveGearRatio());
@@ -51,7 +51,7 @@ class RobotConfigTest {
     assertCorner(drive.modules().get(1), "FrontRight", 20, 21, OptionalInt.empty(), 0.3, -0.3);
     assertCorner(drive.modules().get(2), "BackLeft", 30, 31, OptionalInt.empty(), -0.3, 0.3);
     assertCorner(drive.modules().get(3), "BackRight", 40, 41, OptionalInt.empty(), -0.3, -0.3);
-    assertEquals(0, drive.gyroBusId());
+    assertEquals(2, drive.gyroBusId());
     assertEquals(50, drive.gyroCanId());
     assertEquals(0.0508, drive.wheelRadiusMeters());
     assertEquals(6.75, drive.driveGearRatio());
@@ -70,7 +70,7 @@ class RobotConfigTest {
   void modulesCannotBeChangedAfterConstruction() {
     var modules =
         new ArrayList<>(RobotConfig.forIdentity(RobotIdentity.COMP_BOT).drive().modules());
-    var drive = new DriveConfig(modules, 0, 50, 0.0508, 6.75, 12.8);
+    var drive = new DriveConfig(modules, 2, 50, 0.0508, 6.75, 12.8);
 
     modules.remove(0);
 
@@ -140,7 +140,7 @@ class RobotConfigTest {
       double x,
       double y) {
     assertEquals(name, module.name());
-    assertEquals(0, module.busId(), name);
+    assertEquals(2, module.busId(), name);
     assertEquals(driveCanId, module.driveCanId(), name);
     assertEquals(turnCanId, module.turnCanId(), name);
     assertEquals(encoderCanId, module.encoderCanId(), name);

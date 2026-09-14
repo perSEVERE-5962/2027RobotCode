@@ -72,9 +72,10 @@ public record RobotConfig(DriveConfig drive, SpeedCaps caps) {
   private static final int BACK_LEFT = 30;
   private static final int BACK_RIGHT = 40;
 
-  // Sensors, gyro included, get the 50s. Everything is on can_s0 for now.
+  // Swerve and its gyro get can_s2, the one bus with its own SPI lane. can_s0 is the PDH and
+  // the robot level sensors.
   private static final int GYRO_CAN_ID = 50;
-  private static final int BUS = 0;
+  private static final int BUS = 2;
 
   // The placeholder configs differ only in their encoder ids.
   private static RobotConfig build(boolean separateEncoder) {
