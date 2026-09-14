@@ -72,8 +72,8 @@ public record RobotConfig(DriveConfig drive, SpeedCaps caps) {
   private static final int BACK_LEFT = 30;
   private static final int BACK_RIGHT = 40;
 
-  // Sensors there is only one of go in 5 to 9. Everything is on can_s0 for now.
-  private static final int GYRO_CAN_ID = 5;
+  // Sensors, gyro included, get the 50s. Everything is on can_s0 for now.
+  private static final int GYRO_CAN_ID = 50;
   private static final int BUS = 0;
 
   // The placeholder configs differ only in their encoder ids.
