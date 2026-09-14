@@ -8,6 +8,8 @@ import org.littletonrobotics.junction.wpilog.WPILOGReader;
 import org.littletonrobotics.junction.wpilog.WPILOGWriter;
 
 public class Robot extends LoggedRobot {
+  private final RobotContainer container;
+
   public Robot() {
     // Record metadata
     Logger.recordMetadata("ProjectName", BuildConstants.MAVEN_NAME);
@@ -50,11 +52,17 @@ public class Robot extends LoggedRobot {
 
     // Start AdvantageKit logger
     Logger.start();
+
+    container = new RobotContainer();
   }
 
   /** This function is called periodically during all modes. */
   @Override
-  public void robotPeriodic() {}
+  public void robotPeriodic() {
+    container.periodic();
+    Logger.recordOutput("Scheduler/Faults", container.schedulerFaults());
+    Logger.recordOutput("Scheduler/LastFault", container.lastSchedulerFault());
+  }
 
   /** This function is run once each time the robot enters autonomous mode. */
   @Override
