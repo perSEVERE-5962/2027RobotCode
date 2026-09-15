@@ -35,8 +35,24 @@ class DriveRequestTest {
   }
 
   @Test
-  void noneIsAStopEvenWithVelocity() {
-    assertTrue(new DriveRequest(1.0, 1.0, 1.0, false, Source.NONE).isStop());
+  void noneWithVelocityIsRejected() {
+    assertThrows(
+        IllegalArgumentException.class, () -> new DriveRequest(1.0, 0, 0, false, Source.NONE));
+    assertThrows(
+        IllegalArgumentException.class, () -> new DriveRequest(0, 0, 0.5, false, Source.NONE));
+  }
+
+  @Test
+  void nonFiniteVelocityIsRejected() {
+    for (double bad :
+        new double[] {Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+      assertThrows(
+          IllegalArgumentException.class, () -> new DriveRequest(bad, 0, 0, false, Source.TELEOP));
+      assertThrows(
+          IllegalArgumentException.class, () -> new DriveRequest(0, bad, 0, false, Source.TELEOP));
+      assertThrows(
+          IllegalArgumentException.class, () -> new DriveRequest(0, 0, bad, false, Source.TELEOP));
+    }
   }
 
   @Test
