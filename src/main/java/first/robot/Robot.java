@@ -29,13 +29,14 @@ public class Robot extends LoggedRobot {
     // Set up data receivers & replay source
     switch (Constants.currentMode) {
       case REAL:
-        // Running on a real robot, log to a USB stick ("/U/logs")
-        Logger.addDataReceiver(new WPILOGWriter());
+        // Use SystemCore's home folder. The default /U/logs path is for roboRIO USB drives.
+        Logger.addDataReceiver(new WPILOGWriter("/home/systemcore/logs"));
         Logger.addDataReceiver(new NT4Publisher());
         break;
 
       case SIM:
-        // Running a physics simulator, log to NT
+        // Log to a file too, so a sim run leaves something to replay.
+        Logger.addDataReceiver(new WPILOGWriter("logs"));
         Logger.addDataReceiver(new NT4Publisher());
         break;
 
