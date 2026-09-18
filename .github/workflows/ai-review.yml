@@ -1,0 +1,15 @@
+name: AI PR Review
+
+on:
+  workflow_dispatch:
+
+jobs:
+  placeholder:
+    name: Placeholder
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Placeholder
+        run: |
+          echo "AI PR Review workflow placeholder."
+          echo "The production workflow is being tested in a feature branch."
