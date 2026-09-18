@@ -1,0 +1,366 @@
+name: AI PR Review
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+  issue_comment:
+    types:
+      - created
+
+# Prevent multiple reviews from running simultaneously for the same PR.
+concurrency:
+  group: ai-review-pr-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Automatic review when a PR is opened or updated
+  # ---------------------------------------------------------------------------
+  automatic-review:
+    name: Automatic AI Review
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get PR information
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+
+          gh pr view "$PR_NUMBER" \
+            --json title,body,baseRefName,headRefName,headRefOid \
+            > pr-info.json
+
+      - name: Get PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr diff "$PR_NUMBER" > pr.diff
+
+          # Prevent unexpectedly huge prompts.
+          # The full diff is still available through GitHub if necessary.
+          MAX_BYTES=200000
+
+          if [ "$(wc -c < pr.diff)" -gt "$MAX_BYTES" ]; then
+            echo "PR diff is larger than ${MAX_BYTES} bytes."
+            echo "AI review will receive the beginning of the diff and be told that it was truncated."
+
+            head -c "$MAX_BYTES" pr.diff > pr.diff.truncated
+            mv pr.diff.truncated pr.diff
+
+            echo "DIFF_TRUNCATED=true" >> "$GITHUB_ENV"
+          else
+            echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install Copilot CLI
+        run: |
+          npm install -g @github/copilot
+
+      - name: Run Copilot review
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          DIFF_TRUNCATED: ${{ env.DIFF_TRUNCATED }}
+        run: |
+          cat > review-prompt.txt <<'EOF'
+          You are reviewing a pull request for an FRC robotics team.
+
+          This is an educational code review. The programmers are high-school
+          students, so identify real problems while explaining WHY they matter.
+          Do not nitpick merely for style.
+
+          PROJECT:
+          - Java
+          - WPILib
+          - GradleRIO
+          - FRC command-based robot architecture
+          - AdvantageKit may be used
+
+          REVIEW THE PULL REQUEST FOR:
+
+          1. Correctness and bugs
+          2. WPILib command-based architecture
+          3. Command requirements and scheduler conflicts
+          4. Subsystem design
+          5. Robot initialization and lifecycle issues
+          6. Null-pointer and exception risks
+          7. Motor/controller configuration problems
+          8. CAN device configuration
+          9. Units, conversions, and coordinate systems
+          10. Timing and blocking operations
+          11. Threading/concurrency issues
+          12. Autonomous behavior
+          13. Safety issues that could cause unexpected robot behavior
+          14. AdvantageKit/logging concerns when applicable
+          15. Maintainability and unnecessary complexity
+          16. Regressions caused by the PR
+
+          IMPORTANT:
+          - Do not complain about formatting that should be handled by Spotless.
+          - Do not invent problems.
+          - Do not recommend changes merely because you would personally
+            implement the feature differently.
+          - Focus on concrete, actionable issues.
+          - If something is uncertain, clearly say that it should be verified.
+          - Prioritize correctness and robot behavior over stylistic preferences.
+          - Do not modify any files.
+          - Do not commit or push anything.
+          - Do not run the robot code.
+          - Do not execute scripts, Gradle tasks, tests, or programs from
+            the pull request.
+
+          REVIEW FORMAT:
+
+          Start with a short overall assessment.
+
+          Then list findings using:
+
+          ## Finding 1
+          **Severity:** Critical / High / Medium / Low
+          **Location:** file and line number if available
+          **Problem:** What is wrong or potentially wrong.
+          **Why it matters:** Explain the consequence.
+          **Recommendation:** Explain what the student should investigate or change.
+
+          Only include findings that are worth the student's attention.
+
+          Finish with:
+
+          ## Summary
+
+          Give a short summary of the most important things the student
+          should address before merging.
+
+          Do not give the PR an approval/rejection decision.
+          EOF
+
+          {
+            echo
+            echo "PR TITLE:"
+            printf '%s\n' "$PR_TITLE"
+            echo
+            echo "PR DIFF:"
+            cat pr.diff
+
+            if [ "$DIFF_TRUNCATED" = "true" ]; then
+              echo
+              echo "IMPORTANT: The PR diff was truncated because it was unusually large."
+            fi
+          } >> review-prompt.txt
+
+          copilot \
+            -p "$(cat review-prompt.txt)" \
+            -s \
+            --allow-tool='shell(git:*)' \
+            --no-ask-user \
+            > review.md
+
+      - name: Post review to PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo "## 🤖 AI Code Review"
+            echo
+            echo "> This review was generated by GitHub Copilot using the team's automated review workflow."
+            echo
+            cat review.md
+            echo
+            echo "---"
+            echo
+            echo "_To request another review of the current PR without making a code change, comment **/ai-review**._"
+          } > final-review.md
+
+          gh pr comment "$PR_NUMBER" \
+            --body-file final-review.md
+
+
+  # ---------------------------------------------------------------------------
+  # Manual review requested with:
+  #
+  #     /ai-review
+  #
+  # This runs when someone comments on a PR.
+  # ---------------------------------------------------------------------------
+  manual-review:
+    name: Manual AI Review
+    if: >
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/ai-review')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check commenter permission
+        id: permission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHOR: ${{ github.event.comment.user.login }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          PERMISSION=$(gh api \
+            "/repos/${REPOSITORY}/collaborators/${AUTHOR}/permission" \
+            --jq '.permission' 2>/dev/null || echo "none")
+
+          echo "permission=${PERMISSION}" >> "$GITHUB_OUTPUT"
+
+          case "$PERMISSION" in
+            admin|maintain|push|triage)
+              echo "User has sufficient repository access."
+              ;;
+            *)
+              echo "User does not have permission to request an AI review."
+              exit 1
+              ;;
+          esac
+
+      - name: Get PR information
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr view "$PR_NUMBER" \
+            --json title,body,baseRefName,headRefName,headRefOid \
+            > pr-info.json
+
+      - name: Get PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr diff "$PR_NUMBER" > pr.diff
+
+          MAX_BYTES=200000
+
+          if [ "$(wc -c < pr.diff)" -gt "$MAX_BYTES" ]; then
+            head -c "$MAX_BYTES" pr.diff > pr.diff.truncated
+            mv pr.diff.truncated pr.diff
+            echo "DIFF_TRUNCATED=true" >> "$GITHUB_ENV"
+          else
+            echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install Copilot CLI
+        run: |
+          npm install -g @github/copilot
+
+      - name: Run Copilot review
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_TITLE: ${{ github.event.issue.title }}
+          DIFF_TRUNCATED: ${{ env.DIFF_TRUNCATED }}
+        run: |
+          cat > review-prompt.txt <<'EOF'
+          Perform a fresh code review of this FRC Java pull request.
+
+          The review is for high-school FRC programmers.
+
+          Focus on:
+
+          - correctness and bugs
+          - WPILib command-based architecture
+          - command requirements
+          - scheduler behavior
+          - subsystem interactions
+          - robot lifecycle
+          - CAN configuration
+          - motor/controller behavior
+          - units and conversions
+          - timing and blocking operations
+          - threading/concurrency
+          - autonomous behavior
+          - robot safety
+          - AdvantageKit usage where applicable
+          - maintainability
+          - unintended regressions
+
+          Do not execute code from the pull request.
+          Do not modify files.
+          Do not commit or push changes.
+
+          Do not criticize formatting handled by Spotless.
+
+          Do not invent issues.
+
+          Explain findings in a way that teaches the student why the issue
+          matters.
+
+          Use this format:
+
+          ## Finding 1
+          **Severity:** Critical / High / Medium / Low
+          **Location:** file and line if available
+          **Problem:** ...
+          **Why it matters:** ...
+          **Recommendation:** ...
+
+          Only report actionable findings.
+
+          End with:
+
+          ## Summary
+
+          Summarize the most important things the student should investigate.
+
+          Do not approve or reject the PR.
+          EOF
+
+          {
+            echo
+            echo "PR TITLE:"
+            printf '%s\n' "$PR_TITLE"
+            echo
+            echo "CURRENT PR DIFF:"
+            cat pr.diff
+
+            if [ "$DIFF_TRUNCATED" = "true" ]; then
+              echo
+              echo "IMPORTANT: The PR diff was truncated because it was unusually large."
+            fi
+          } >> review-prompt.txt
+
+          copilot \
+            -p "$(cat review-prompt.txt)" \
+            -s \
+            --allow-tool='shell(git:*)' \
+            --no-ask-user \
+            > review.md
+
+      - name: Post review to PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          {
+            echo "## 🤖 AI Code Review"
+            echo
+            echo "> Fresh review requested with \`/ai-review\`."
+            echo
+            cat review.md
+          } > final-review.md
+
+          gh pr comment "$PR_NUMBER" \
+            --body-file final-review.md
