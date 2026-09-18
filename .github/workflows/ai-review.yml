@@ -30,8 +30,7 @@ jobs:
   automatic-review:
     name: Automatic AI Review
     if: >
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.draft == false
+      github.event_name == 'pull_request' 
 
     runs-on: ubuntu-latest
 
