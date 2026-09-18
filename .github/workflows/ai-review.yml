@@ -45,6 +45,7 @@ jobs:
 
           gh pr view "$PR_NUMBER" \
             --json title,body,baseRefName,headRefName,headRefOid \
+            --repo "$GITHUB_REPOSITORY" \
             > pr-info.json
 
       - name: Get PR diff
@@ -52,7 +53,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          gh pr diff "$PR_NUMBER" > pr.diff
+          gh pr diff "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            > pr.diff
 
           # Prevent unexpectedly huge prompts.
           # The full diff is still available through GitHub if necessary.
@@ -192,6 +195,7 @@ jobs:
           } > final-review.md
 
           gh pr comment "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
             --body-file final-review.md
 
 
@@ -221,6 +225,7 @@ jobs:
         run: |
           PERMISSION=$(gh api \
             "/repos/${REPOSITORY}/collaborators/${AUTHOR}/permission" \
+            --repo "$GITHUB_REPOSITORY" \
             --jq '.permission' 2>/dev/null || echo "none")
 
           echo "permission=${PERMISSION}" >> "$GITHUB_OUTPUT"
@@ -242,6 +247,7 @@ jobs:
         run: |
           gh pr view "$PR_NUMBER" \
             --json title,body,baseRefName,headRefName,headRefOid \
+            --repo "$GITHUB_REPOSITORY" \
             > pr-info.json
 
       - name: Get PR diff
@@ -249,7 +255,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
         run: |
-          gh pr diff "$PR_NUMBER" > pr.diff
+          gh pr diff "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            > pr.diff
 
           MAX_BYTES=200000
 
