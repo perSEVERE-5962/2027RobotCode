@@ -20,7 +20,7 @@ The tens digit is the subsystem, the ones digit is the job. Each bus has its own
 
 | Decade | What |
 |---|---|
-| 1 | REV PDH |
+| 0x | REV PDH, at its factory default of 1 |
 | 1x | Range sensors |
 | 2x | Floor and colour sensors |
 | 3x | LEDs, pneumatics |
@@ -66,7 +66,7 @@ Krakens on Phoenix 6, CANcoders for azimuth, Pigeon 2.
 | Device | Type | Bus | Id | Status |
 |---|---|---|---|---|
 | PDH | REV PDH | can_s0 | 1 | planned |
-| Range sensors | CANrange | can_s0 | 10 and up | planned |
+| Range sensors | CANrange | can_s0 | 10 to 19 | planned |
 | Gyro | Pigeon 2 | can_s2 | 50 | planned |
 | Front left drive, steer, encoder | TalonFX, TalonFX, CANcoder | can_s2 | 10, 11, 12 | planned |
 | Front right drive, steer, encoder | same | can_s2 | 20, 21, 22 | planned |
