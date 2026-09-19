@@ -3,14 +3,18 @@ package first.robot;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
-import org.wpilib.driverstation.Alert;
 import org.wpilib.framework.RobotBase;
+import org.wpilib.util.Alert;
 
 /** Which robot this code woke up on: comp bot, practice bot, or sim. */
 public enum RobotIdentity {
   COMP_BOT,
   PRACTICE_BOT,
   SIM;
+
+  private static final Alert UNKNOWN_IDENTITY_ALERT =
+      new Alert(
+          "robot-identity-unknown", "Robot identity unknown, assuming COMP_BOT.", Alert.Level.HIGH);
 
   // Marker file instead of a serial-number map so a controller swap keeps the right identity.
   private static final Path MARKER = Path.of("/home/systemcore/robot_id");
@@ -31,14 +35,13 @@ public enum RobotIdentity {
     try {
       return fromMarker(Files.readString(marker));
     } catch (Exception e) {
-      new Alert(
-              "Robot identity unknown, assuming COMP_BOT. Write COMP_BOT or PRACTICE_BOT to "
-                  + marker
-                  + " ("
-                  + e.getMessage()
-                  + ")",
-              Alert.Level.HIGH)
-          .set(true);
+      UNKNOWN_IDENTITY_ALERT.setText(
+          "Robot identity unknown, assuming COMP_BOT. Write COMP_BOT or PRACTICE_BOT to "
+              + marker
+              + " ("
+              + e.getMessage()
+              + ")");
+      UNKNOWN_IDENTITY_ALERT.set(true);
       return COMP_BOT;
     }
   }

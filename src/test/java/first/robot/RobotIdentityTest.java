@@ -47,7 +47,9 @@ class RobotIdentityTest {
 
   @Test
   void missingMarkerOnHardwareFallsBackToComp() {
-    assertEquals(RobotIdentity.COMP_BOT, RobotIdentity.resolve(true, tempDir.resolve("robot_id")));
+    Path marker = tempDir.resolve("robot_id");
+    marker.toFile().delete();
+    assertEquals(RobotIdentity.COMP_BOT, RobotIdentity.resolve(true, marker));
   }
 
   @Test
