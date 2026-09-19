@@ -2,12 +2,12 @@ package first.robot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.wpilib.command3.Command;
-import org.wpilib.command3.Mechanism;
 import org.wpilib.command3.Scheduler;
 
 /**
@@ -21,7 +21,7 @@ class HelloCommandsV3Test {
 
   @Test
   void coroutineCommandRunsToCompletion() {
-    var mechanism = new Mechanism("Hello", scheduler);
+    var mechanism = new DummyMechanism("Hello", scheduler);
     var ticks = new ArrayList<Integer>();
 
     Command hello =
@@ -35,7 +35,7 @@ class HelloCommandsV3Test {
                 })
             .named("Hello World");
 
-    assertEquals(Scheduler.ScheduleResult.SUCCESS, scheduler.schedule(hello));
+    assertTrue(scheduler.schedule(hello).successful());
 
     // Bounded so a scheduler bug fails the asserts instead of hanging the test.
     for (int i = 0; i < 5 && scheduler.isScheduledOrRunning(hello); i++) {
