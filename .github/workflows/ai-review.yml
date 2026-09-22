@@ -240,7 +240,18 @@ jobs:
               exit 1
               ;;
           esac
-          
+
+      - name: Notify commenter of insufficient permissions
+        if: ${{ failure() && steps.permission.outcome == 'failure' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ github.event.comment.user.login }}
+        run: |
+          gh pr comment "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body "@${AUTHOR}, your \`/ai-review\` request could not be processed because you do not have sufficient repository permissions. Please ask a repository administrator, maintainer, or collaborator with write access to request the review."
+            
       - name: Get PR information
         env:
           GH_TOKEN: ${{ github.token }}
