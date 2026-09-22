@@ -76,7 +76,7 @@ jobs:
 
       - name: Install Copilot CLI
         run: |
-          npm install -g @github/copilot
+          npm install -g @github/copilot@1.0.87
 
       - name: Run Copilot review
         env:
@@ -273,7 +273,7 @@ jobs:
 
       - name: Install Copilot CLI
         run: |
-          npm install -g @github/copilot
+          npm install -g @github/copilot@1.0.87
 
       - name: Run Copilot review
         env:
