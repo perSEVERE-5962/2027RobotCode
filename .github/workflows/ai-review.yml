@@ -29,6 +29,7 @@ jobs:
   # ---------------------------------------------------------------------------
   automatic-review:
     name: Automatic AI Review
+    timeout-minutes: 10
     if: >
       github.event_name == 'pull_request' && github.event.pull_request.draft == false
 
@@ -208,6 +209,7 @@ jobs:
   # ---------------------------------------------------------------------------
   manual-review:
     name: Manual AI Review
+    timeout-minutes: 10
     if: >
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&
