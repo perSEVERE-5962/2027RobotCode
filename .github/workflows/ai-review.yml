@@ -223,10 +223,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           AUTHOR: ${{ github.event.comment.user.login }}
-          REPOSITORY: ${{ github.repository }}
         run: |
           PERMISSION=$(gh api \
-            "/repos/${REPOSITORY}/collaborators/${AUTHOR}/permission" \
+            "/repos/${GITHUB_REPOSITORY}/collaborators/${AUTHOR}/permission" \
             --repo "$GITHUB_REPOSITORY" \
             --jq '.permission' 2>/dev/null || echo "none")
 
@@ -241,7 +240,7 @@ jobs:
               exit 1
               ;;
           esac
-
+          
       - name: Get PR information
         env:
           GH_TOKEN: ${{ github.token }}
