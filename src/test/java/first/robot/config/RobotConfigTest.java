@@ -3,6 +3,7 @@ package first.robot.config;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import first.robot.RobotIdentity;
@@ -75,6 +76,7 @@ class RobotConfigTest {
     modules.remove(0);
 
     assertEquals(4, drive.modules().size());
+    assertThrows(UnsupportedOperationException.class, () -> drive.modules().remove(0));
   }
 
   @ParameterizedTest
