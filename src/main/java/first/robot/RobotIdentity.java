@@ -4,7 +4,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 import org.wpilib.driverstation.Alert;
-import org.wpilib.framework.RobotBase;
 
 /** Which robot this code woke up on: comp bot, practice bot, or sim. */
 public enum RobotIdentity {
@@ -16,18 +15,27 @@ public enum RobotIdentity {
   private static final Path MARKER = Path.of("/home/systemcore/robot_id");
 
   /**
-   * Always SIM off hardware. On hardware the marker file decides. A missing or unreadable marker
-   * alerts and falls back to COMP_BOT rather than crash-looping at an event.
+   * The mode is passed in from Constants, so this doesn't check for hardware on its own. REAL reads
+   * the marker file. SIM and REPLAY return SIM. REPLAY returning SIM is temporary until issue #77
+   * reads the robot's identity from the log.
    */
-  public static RobotIdentity resolve() {
-    return resolve(RobotBase.isReal(), MARKER);
+  public static RobotIdentity resolve(Constants.Mode mode) {
+    return resolve(mode, MARKER);
   }
 
-  // Split out so tests can fake being on hardware and point at their own marker files.
-  static RobotIdentity resolve(boolean onHardware, Path marker) {
-    if (!onHardware) {
-      return SIM;
-    }
+  // Split out so tests can pick the mode and point at their own marker files.
+  static RobotIdentity resolve(Constants.Mode mode, Path marker) {
+    return switch (mode) {
+      case REAL -> readMarker(marker);
+      case SIM, REPLAY -> SIM;
+    };
+  }
+
+  /**
+   * A missing or unreadable marker alerts and falls back to COMP_BOT rather than crash-looping at
+   * an event.
+   */
+  private static RobotIdentity readMarker(Path marker) {
     try {
       return fromMarker(Files.readString(marker));
     } catch (Exception e) {
