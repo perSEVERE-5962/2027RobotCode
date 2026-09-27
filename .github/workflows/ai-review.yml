@@ -61,8 +61,10 @@ jobs:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
         run: |
           if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
-            echo "COPILOT_TOKEN not configured; skipping AI review."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "COPILOT_TOKEN not configured; skipping AI review."
+              echo "skip=true"
+            } >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -97,8 +99,10 @@ jobs:
           if [ "$DIFF_EXIT" -ne 0 ]; then
             echo "gh pr diff failed with exit code ${DIFF_EXIT}; continuing with an empty diff."
             echo "No PR diff available for this review." > pr.diff
-            echo "DIFF_UNAVAILABLE=true" >> "$GITHUB_ENV"
-            echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
+            {
+              echo "DIFF_UNAVAILABLE=true"
+              echo "DIFF_TRUNCATED=false"
+            } >> "$GITHUB_ENV"
             exit 0
           fi
 
@@ -118,6 +122,17 @@ jobs:
             echo "DIFF_TRUNCATED=true" >> "$GITHUB_ENV"
           else
             echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Get changed files
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
+        run: |
+          if [ -f pr.diff ]; then
+            grep -E '^diff --git ' pr.diff \
+              | sed -E 's#^diff --git a/([^ ]+) b/.*#\1#' \
+              | sort -u > changed-files.txt
+          else
+            : > changed-files.txt
           fi
 
       - name: Checkout repository
@@ -183,6 +198,10 @@ jobs:
           16. Regressions caused by the PR
 
           IMPORTANT:
+          - Only review files that are part of this pull request's diff.
+          - Ignore all other files in the repository.
+          - Do not report issues in unchanged code or files not listed in the
+            PR diff.
           - Do not complain about formatting that should be handled by Spotless.
           - Do not invent problems.
           - Do not recommend changes merely because you would personally
@@ -226,7 +245,14 @@ jobs:
             echo "PR TITLE:"
             printf '%s\n' "$PR_TITLE"
             echo
-            echo "PR DIFF:"
+            echo "CHANGED FILES ONLY:"
+            if [ -f changed-files.txt ]; then
+              cat changed-files.txt
+            else
+              echo "No changed files were identified."
+            fi
+            echo
+            echo "CURRENT PR DIFF:"
             if [ -f pr.diff ]; then
               cat pr.diff
             else
@@ -237,6 +263,8 @@ jobs:
               echo
               echo "IMPORTANT: The PR diff was truncated because it was unusually large."
             fi
+            echo
+            echo "SCOPE RULE: Only evaluate the files listed above. Ignore all other files in the repository, including code that is unchanged by this PR."
           } >> review-prompt.txt
 
           # Append build/lint summary so the model can suggest fixes in one pass.
@@ -335,26 +363,36 @@ jobs:
           PERMISSION=$(printf '%s\n' "$PERMISSION_BODY" | jq -r '.permission // empty' 2>/dev/null || true)
 
           if [ "${HTTP_STATUS}" = "404" ]; then
-            echo "permission=none" >> "$GITHUB_OUTPUT"
-            echo "api_error=false" >> "$GITHUB_OUTPUT"
-            echo "authorized=false" >> "$GITHUB_OUTPUT"
-            echo "User is not a collaborator on this repository."
+            {
+              echo "permission=none"
+              echo "api_error=false"
+              echo "authorized=false"
+              echo "User is not a collaborator on this repository."
+            } >> "$GITHUB_OUTPUT"
           elif [ -z "$PERMISSION" ]; then
-            echo "permission=error" >> "$GITHUB_OUTPUT"
-            echo "api_error=true" >> "$GITHUB_OUTPUT"
-            echo "authorized=false" >> "$GITHUB_OUTPUT"
-            echo "Failed to query collaborator permission (API error)."
+            {
+              echo "permission=error"
+              echo "api_error=true"
+              echo "authorized=false"
+              echo "Failed to query collaborator permission (API error)."
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "permission=${PERMISSION}" >> "$GITHUB_OUTPUT"
-            echo "api_error=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "permission=${PERMISSION}"
+              echo "api_error=false"
+            } >> "$GITHUB_OUTPUT"
             case "$PERMISSION" in
               admin|maintain|push|triage)
-                echo "authorized=true" >> "$GITHUB_OUTPUT"
-                echo "User has sufficient repository access."
+                {
+                  echo "authorized=true"
+                  echo "User has sufficient repository access."
+                } >> "$GITHUB_OUTPUT"
                 ;;
               *)
-                echo "authorized=false" >> "$GITHUB_OUTPUT"
-                echo "User does not have permission to request an AI review."
+                {
+                  echo "authorized=false"
+                  echo "User does not have permission to request an AI review."
+                } >> "$GITHUB_OUTPUT"
                 ;;
             esac
           fi
@@ -366,11 +404,12 @@ jobs:
           PR_NUMBER: ${{ env.PR_NUMBER }}
           AUTHOR: ${{ github.event.comment.user.login || github.actor }}
         run: |
-            {
-              echo "@${AUTHOR}, your /ai-review request could not be processed"
-              echo "because the server could not verify repository permissions due to an API error."
-              echo "Please try again. If the problem persists, contact a repository administrator."
-            } > comment-body.txt
+            printf '%s\n' \
+              "@${AUTHOR}, your /ai-review request could not be processed" \
+              "because the server could not verify repository permissions due to an API error." \
+              "Please try again. If the problem persists, contact a repository administrator." \
+              > comment-body.txt
+
             gh pr comment "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
               --body-file comment-body.txt
@@ -382,12 +421,13 @@ jobs:
           PR_NUMBER: ${{ env.PR_NUMBER }}
           AUTHOR: ${{ github.event.comment.user.login || github.actor }}
         run: |
-            {
-              echo "@${AUTHOR}, your /ai-review request could not be processed"
-              echo "because you do not have sufficient repository permissions."
-              echo "Please ask a repository administrator, maintainer, or"
-              echo "collaborator with write access to request the review."
-            } > comment-body.txt
+            printf '%s\n' \
+              "@${AUTHOR}, your /ai-review request could not be processed" \
+              "because you do not have sufficient repository permissions." \
+              "Please ask a repository administrator, maintainer, or" \
+              "collaborator with write access to request the review." \
+              > comment-body.txt
+
             gh pr comment "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
               --body-file comment-body.txt
@@ -399,8 +439,10 @@ jobs:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
         run: |
           if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
-            echo "COPILOT_TOKEN not configured; skipping AI review."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "COPILOT_TOKEN not configured; skipping AI review."
+              echo "skip=true"
+            } >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -420,17 +462,23 @@ jobs:
             --jq '.headRepository.nameWithOwner' 2>/dev/null || true)
 
           if [ -z "$HEAD_REPO" ]; then
-            echo "same_repo=false" >> "$GITHUB_OUTPUT"
-            echo "Could not determine the PR head repository; refusing to run against untrusted code."
+            {
+              echo "same_repo=false"
+              echo "Could not determine the PR head repository; refusing to run against untrusted code."
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
-            echo "same_repo=true" >> "$GITHUB_OUTPUT"
-            echo "Reviewing a same-repository PR only."
+            {
+              echo "same_repo=true"
+              echo "Reviewing a same-repository PR only."
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "same_repo=false" >> "$GITHUB_OUTPUT"
-            echo "PR head repository is ${HEAD_REPO}; skipping review for untrusted fork PRs."
+            {
+              echo "same_repo=false"
+              echo "PR head repository is ${HEAD_REPO}; skipping review for untrusted fork PRs."
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Notify commenter of forked PR restriction
@@ -440,10 +488,11 @@ jobs:
           PR_NUMBER: ${{ env.PR_NUMBER }}
           AUTHOR: ${{ github.event.comment.user.login || github.actor }}
         run: |
-            {
-              echo "@${AUTHOR}, /ai-review is only available for pull requests from this repository."
-              echo "Forked PRs are skipped to avoid running untrusted code with repository credentials."
-            } > comment-body.txt
+            printf '%s\n' \
+              "@${AUTHOR}, /ai-review is only available for pull requests from this repository." \
+              "Forked PRs are skipped to avoid running untrusted code with repository credentials." \
+              > comment-body.txt
+
             gh pr comment "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
               --body-file comment-body.txt
@@ -475,8 +524,10 @@ jobs:
           if [ "$DIFF_EXIT" -ne 0 ]; then
             echo "gh pr diff failed with exit code ${DIFF_EXIT}; continuing with an empty diff."
             echo "No PR diff available for this review." > pr.diff
-            echo "DIFF_UNAVAILABLE=true" >> "$GITHUB_ENV"
-            echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
+            {
+              echo "DIFF_UNAVAILABLE=true"
+              echo "DIFF_TRUNCATED=false"
+            } >> "$GITHUB_ENV"
             exit 0
           fi
 
@@ -490,6 +541,17 @@ jobs:
             echo "DIFF_TRUNCATED=true" >> "$GITHUB_ENV"
           else
             echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Get changed files
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        run: |
+          if [ -f pr.diff ]; then
+            grep -E '^diff --git ' pr.diff \
+              | sed -E 's#^diff --git a/([^ ]+) b/.*#\1#' \
+              | sort -u > changed-files.txt
+          else
+            : > changed-files.txt
           fi
 
       - name: Checkout repository
@@ -550,6 +612,9 @@ jobs:
 
           Do not criticize formatting handled by Spotless.
 
+          Only review files listed in the PR diff below. Ignore all other files
+          in the repository and do not report issues from unchanged code.
+
           Do not invent issues.
 
           Explain findings in a way that teaches the student why the issue
@@ -580,6 +645,13 @@ jobs:
             echo "PR TITLE:"
             printf '%s\n' "$PR_TITLE"
             echo
+            echo "CHANGED FILES ONLY:"
+            if [ -f changed-files.txt ]; then
+              cat changed-files.txt
+            else
+              echo "No changed files were identified."
+            fi
+            echo
             echo "CURRENT PR DIFF:"
             if [ -f pr.diff ]; then
               cat pr.diff
@@ -591,6 +663,8 @@ jobs:
               echo
               echo "IMPORTANT: The PR diff was truncated because it was unusually large."
             fi
+            echo
+            echo "SCOPE RULE: Only evaluate the files listed above. Ignore all other files in the repository, including code that is unchanged by this PR."
           } >> review-prompt.txt
 
           if [ -f build_summary.txt ]; then
