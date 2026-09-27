@@ -45,13 +45,17 @@ jobs:
 
     steps:
       - name: Check Copilot token
+        id: check-token
         run: |
           if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
             echo "COPILOT_TOKEN not configured; skipping AI review."
-            exit 0
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Get PR information
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
@@ -65,6 +69,7 @@ jobs:
             > pr-info.json
 
       - name: Get PR diff
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -90,10 +95,12 @@ jobs:
           fi
 
       - name: Install Copilot CLI
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
         run: |
           npm install -g @github/copilot@1.0.87
 
       - name: Run Copilot review
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -194,6 +201,7 @@ jobs:
             > review.md
 
       - name: Post review to PR
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -232,6 +240,7 @@ jobs:
     steps:
       - name: Check commenter permission
         id: permission
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           AUTHOR: ${{ github.event.comment.user.login }}
@@ -254,7 +263,7 @@ jobs:
           esac
 
       - name: Notify commenter of insufficient permissions
-        if: ${{ failure() && steps.permission.outcome == 'failure' }}
+        if: ${{ steps.permission.outcome == 'failure' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
