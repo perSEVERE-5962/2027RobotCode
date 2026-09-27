@@ -14,6 +14,10 @@ on:
       - created
   workflow_dispatch:
     inputs:
+      pr_number:
+        description: 'Pull request number to review when manually dispatching a dry run or test review.'
+        required: false
+        default: ''
       dry_run:
         description: 'If true, do not post comments; upload review as artifact instead.'
         required: false
@@ -21,7 +25,7 @@ on:
 
 # Prevent multiple reviews from running simultaneously for the same PR.
 concurrency:
-  group: ai-review-pr-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: ai-review-pr-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.issue.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -121,6 +125,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run project build and linters
         if: ${{ steps.check-token.outputs.skip != 'true' }}
@@ -297,10 +302,16 @@ jobs:
     timeout-minutes: 10
     env:
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.issue.number || github.event.pull_request.number }}
     if: >
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/ai-review')
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(github.event.comment.body, '/ai-review')
+      ) || (
+        github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.pr_number != ''
+      )
 
     runs-on: ubuntu-latest
 
@@ -309,16 +320,26 @@ jobs:
         id: permission
         env:
           GH_TOKEN: ${{ github.token }}
-          AUTHOR: ${{ github.event.comment.user.login }}
+          AUTHOR: ${{ github.event.comment.user.login || github.actor }}
         run: |
           set -e
 
-          PERMISSION=$(gh api \
+          PERMISSION_RESPONSE=$(gh api \
             "/repos/${GITHUB_REPOSITORY}/collaborators/${AUTHOR}/permission" \
             --repo "$GITHUB_REPOSITORY" \
-            --jq '.permission' 2>/dev/null) || RC=$?
+            --include \
+            --silent 2>/dev/null || true)
 
-          if [ -z "$PERMISSION" ]; then
+          HTTP_STATUS=$(printf '%s\n' "$PERMISSION_RESPONSE" | awk 'NR == 1 { print $2 }')
+          PERMISSION_BODY=$(printf '%s\n' "$PERMISSION_RESPONSE" | awk 'BEGIN { found = 0 } { if (found) print; if ($0 == "") found = 1 }')
+          PERMISSION=$(printf '%s\n' "$PERMISSION_BODY" | jq -r '.permission // empty' 2>/dev/null || true)
+
+          if [ "${HTTP_STATUS}" = "404" ]; then
+            echo "permission=none" >> "$GITHUB_OUTPUT"
+            echo "api_error=false" >> "$GITHUB_OUTPUT"
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
+            echo "User is not a collaborator on this repository."
+          elif [ -z "$PERMISSION" ]; then
             echo "permission=error" >> "$GITHUB_OUTPUT"
             echo "api_error=true" >> "$GITHUB_OUTPUT"
             echo "authorized=false" >> "$GITHUB_OUTPUT"
@@ -342,12 +363,14 @@ jobs:
         if: ${{ steps.permission.outputs.api_error == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          AUTHOR: ${{ github.event.comment.user.login }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          AUTHOR: ${{ github.event.comment.user.login || github.actor }}
         run: |
-            echo "@${AUTHOR}, your /ai-review request could not be processed" > comment-body.txt
-            echo "because the server could not verify repository permissions due to an API error." >> comment-body.txt
-            echo "Please try again. If the problem persists, contact a repository administrator." >> comment-body.txt
+            {
+              echo "@${AUTHOR}, your /ai-review request could not be processed"
+              echo "because the server could not verify repository permissions due to an API error."
+              echo "Please try again. If the problem persists, contact a repository administrator."
+            } > comment-body.txt
             gh pr comment "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
               --body-file comment-body.txt
@@ -356,16 +379,19 @@ jobs:
         if: ${{ steps.permission.outputs.api_error == 'false' && steps.permission.outputs.authorized == 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          AUTHOR: ${{ github.event.comment.user.login }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          AUTHOR: ${{ github.event.comment.user.login || github.actor }}
         run: |
-            echo "@${AUTHOR}, your /ai-review request could not be processed" > comment-body.txt
-            echo "because you do not have sufficient repository permissions." >> comment-body.txt
-            echo "Please ask a repository administrator, maintainer, or" >> comment-body.txt
-            echo "collaborator with write access to request the review." >> comment-body.txt
+            {
+              echo "@${AUTHOR}, your /ai-review request could not be processed"
+              echo "because you do not have sufficient repository permissions."
+              echo "Please ask a repository administrator, maintainer, or"
+              echo "collaborator with write access to request the review."
+            } > comment-body.txt
             gh pr comment "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
               --body-file comment-body.txt
+
       - name: Check Copilot token
         id: check-token-manual
         if: ${{ steps.permission.outputs.authorized == 'true' }}
@@ -379,11 +405,54 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Get PR information
+      - name: Check PR source repository
+        id: pr-source
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+        run: |
+          set -e
+
+          HEAD_REPO=$(gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json headRepository \
+            --jq '.headRepository.nameWithOwner' 2>/dev/null || true)
+
+          if [ -z "$HEAD_REPO" ]; then
+            echo "same_repo=false" >> "$GITHUB_OUTPUT"
+            echo "Could not determine the PR head repository; refusing to run against untrusted code."
+            exit 0
+          fi
+
+          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            echo "same_repo=true" >> "$GITHUB_OUTPUT"
+            echo "Reviewing a same-repository PR only."
+          else
+            echo "same_repo=false" >> "$GITHUB_OUTPUT"
+            echo "PR head repository is ${HEAD_REPO}; skipping review for untrusted fork PRs."
+          fi
+
+      - name: Notify commenter of forked PR restriction
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'false' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          AUTHOR: ${{ github.event.comment.user.login || github.actor }}
+        run: |
+            {
+              echo "@${AUTHOR}, /ai-review is only available for pull requests from this repository."
+              echo "Forked PRs are skipped to avoid running untrusted code with repository credentials."
+            } > comment-body.txt
+            gh pr comment "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body-file comment-body.txt
+
+      - name: Get PR information
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
         run: |
           gh pr view "$PR_NUMBER" \
             --json title,body,baseRefName,headRefName,headRefOid \
@@ -391,10 +460,10 @@ jobs:
             > pr-info.json
 
       - name: Get PR diff
-        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
         run: |
           set +e
           gh pr diff "$PR_NUMBER" \
@@ -424,13 +493,14 @@ jobs:
           fi
 
       - name: Checkout repository
-        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run project build and linters
-        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         run: |
           set -o pipefail
           if [ -f ./gradlew ]; then chmod +x ./gradlew; fi
@@ -438,16 +508,16 @@ jobs:
           tail -n 500 build.log > build_summary.txt || true
 
       - name: Install Copilot CLI
-        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         run: |
           npm install -g @github/copilot@1.0.87
 
       - name: Run Copilot review
-        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          PR_TITLE: ${{ github.event.issue.title }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          PR_TITLE: ${{ github.event.issue.title || github.event.pull_request.title }}
           DIFF_TRUNCATED: ${{ env.DIFF_TRUNCATED }}
         run: |
           cat > review-prompt.txt <<'EOF'
@@ -538,10 +608,10 @@ jobs:
           copilot -p "$(cat review-prompt.txt)" --allow-tool='shell(git:*)' -s --no-ask-user > review.md
 
       - name: Post review to PR
-        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
           DRY_RUN: ${{ env.DRY_RUN || 'false' }}
         run: |
           {
@@ -556,11 +626,12 @@ jobs:
             echo "DRY_RUN=true; final-review.md is ready as artifact"
           else
             gh pr comment "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
               --body-file final-review.md
           fi
 
       - name: Upload final review artifact
-        if: ${{ env.DRY_RUN == 'true' && steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        if: ${{ env.DRY_RUN == 'true' && steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: final-review
