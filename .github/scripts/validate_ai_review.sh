@@ -33,35 +33,56 @@ text = wf.read_text(encoding='utf-8')
 lines = text.splitlines()
 
 # We only reject job-level env declarations, not step-level env blocks.
-# A job-level entry is a YAML key under a job, while step-level entries are nested under a step.
-job_env = False
+# A job-level env sits directly under a job (e.g. "    env:"), while a step-level
+# env sits inside a step body (e.g. "        env:" under "- name:").
+job_indent = None
 step_indent = None
+job_env = False
+
 for idx, line in enumerate(lines):
     stripped = line.strip()
-    if stripped.startswith('env:') and not stripped.startswith('- env:'):
-        indent = len(line) - len(line.lstrip(' '))
-        if step_indent is None:
-            if indent <= 6:
-                job_env = True
+    if not stripped or stripped.startswith('#'):
+        continue
+
+    indent = len(line) - len(line.lstrip(' '))
+
+    if stripped.startswith('jobs:'):
+        job_indent = 0
+        step_indent = None
+        job_env = False
+        continue
+
+    if job_indent is not None and indent == 2 and stripped.endswith(':') and not stripped.startswith('-'):
+        # A new job starts at this indentation; reset any previous step/job env state.
+        job_indent = indent
+        step_indent = None
+        job_env = False
+        continue
+
+    if stripped.startswith('- name:') or stripped.startswith('- id:'):
+        step_indent = indent
+        job_env = False
+        continue
+
+    if stripped == 'env:':
+        if step_indent is None and job_indent is not None and indent > job_indent and indent <= job_indent + 2:
+            job_env = True
         else:
-            if indent <= step_indent + 2:
-                job_env = True
+            job_env = False
+        continue
+
     if stripped.startswith('COPILOT_GITHUB_TOKEN:'):
         if job_env:
             raise SystemExit("Job-level COPILOT_GITHUB_TOKEN is present; scope it to a step env block.")
-        # If it is configured under a step, the preceding env block is valid.
-        prev = lines[idx - 1].strip() if idx > 0 else ''
-        if prev == 'env:':
-            continue
-        # Fallback guard: do not allow bare token usage outside a step env block.
-        if not any((line.strip() == 'env:') for line in lines[max(0, idx - 8):idx]):
+        if step_indent is None and job_indent is not None and indent <= job_indent + 2:
             raise SystemExit("COPILOT_GITHUB_TOKEN is not clearly scoped to a step env block.")
 
-    if stripped.startswith('- name:'):
-        step_indent = len(line) - len(line.lstrip(' '))
-    elif stripped and not stripped.startswith('#') and not line.startswith(' '):
-        # Left a step scope; no step env is active for subsequent job-level checks.
+    if indent == 0 and stripped.endswith(':') and not stripped.startswith('-'):
+        # Leaving the current job context. A later env block is only job-level if it is
+        # nested under the job itself.
         step_indent = None
+        job_indent = None
+        job_env = False
 PY
 
 # Check markdown divider spacing (echo "---" should have blank echo lines around it)

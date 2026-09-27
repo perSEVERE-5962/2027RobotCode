@@ -85,6 +85,7 @@ jobs:
 
       - name: Get PR diff
         if: ${{ steps.check-token.outputs.skip != 'true' }}
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -103,7 +104,7 @@ jobs:
               echo "DIFF_UNAVAILABLE=true"
               echo "DIFF_TRUNCATED=false"
             } >> "$GITHUB_ENV"
-            exit 1
+            exit 0
           fi
 
           echo "DIFF_UNAVAILABLE=false" >> "$GITHUB_ENV"
@@ -529,6 +530,7 @@ jobs:
 
       - name: Get PR diff
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ env.PR_NUMBER }}
@@ -547,7 +549,7 @@ jobs:
               echo "DIFF_UNAVAILABLE=true"
               echo "DIFF_TRUNCATED=false"
             } >> "$GITHUB_ENV"
-            exit 1
+            exit 0
           fi
 
           echo "DIFF_UNAVAILABLE=false" >> "$GITHUB_ENV"
