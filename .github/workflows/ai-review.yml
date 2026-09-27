@@ -30,8 +30,13 @@ jobs:
   automatic-review:
     name: Automatic AI Review
     timeout-minutes: 10
+    # Only review pull requests from branches in this repository. Forked PRs are
+    # left to the manual /ai-review flow, which requires explicit repository access.
     if: >
-      github.event_name == 'pull_request' && github.event.pull_request.draft == false
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      secrets.COPILOT_TOKEN != ''
 
     runs-on: ubuntu-latest
 
