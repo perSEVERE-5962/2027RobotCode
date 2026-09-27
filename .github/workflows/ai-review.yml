@@ -38,14 +38,15 @@ jobs:
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository
 
-    env:
-      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+    # Do not expose the Copilot token at the job level; scope it to steps that need it.
 
     runs-on: ubuntu-latest
 
     steps:
       - name: Check Copilot token
         id: check-token
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
         run: |
           if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
             echo "COPILOT_TOKEN not configured; skipping AI review."
@@ -97,11 +98,23 @@ jobs:
       - name: Install Copilot CLI
         if: ${{ steps.check-token.outputs.skip != 'true' }}
         run: |
+          # Run project build and linters before invoking Copilot so the model
+          # can see compile/test/lint failures and suggest comprehensive fixes.
+          set -o pipefail
+          ./gradlew check --no-daemon > build.log 2>&1 || echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
+          # create a short summary for inclusion in the review prompt
+          tail -n 500 build.log > build_summary.txt || true
+
+        
+      - name: Install Copilot CLI
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
+        run: |
           npm install -g @github/copilot@1.0.87
 
       - name: Run Copilot review
         if: ${{ steps.check-token.outputs.skip != 'true' }}
         env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           DIFF_TRUNCATED: ${{ env.DIFF_TRUNCATED }}
@@ -192,19 +205,29 @@ jobs:
             fi
           } >> review-prompt.txt
 
-          # The review prompt contains only PR metadata and diff text. Do not allow
-          # the model to invoke repository shell tools from attacker-controlled content.
-          copilot \
-            -p "$(cat review-prompt.txt)" \
-            -s \
-            --no-ask-user \
-            > review.md
+          # Append build/lint summary so the model can suggest fixes in one pass.
+          if [ -f build_summary.txt ]; then
+            {
+              echo
+              echo "BUILD & LINT SUMMARY:"
+              cat build_summary.txt
+              if [ "${BUILD_FAILED-}" = "true" ]; then
+                echo
+                echo "NOTE: Build or linters failed; logs included above."
+              fi
+            } >> review-prompt.txt
+          fi
+
+          # The review prompt contains PR metadata, diff, and build summary.
+          # Do not allow the model to invoke repository shell tools from attacker-controlled content.
+          copilot -p "$(cat review-prompt.txt)" -s --no-ask-user > review.md
 
       - name: Post review to PR
         if: ${{ steps.check-token.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          DRY_RUN: ${{ env.DRY_RUN || 'false' }}
         run: |
           {
             echo "## 🤖 AI Code Review"
@@ -218,9 +241,17 @@ jobs:
             echo "_To request another review of the current PR without making a code change, comment **/ai-review**._"
           } > final-review.md
 
-          gh pr comment "$PR_NUMBER" \
-            --repo "$GITHUB_REPOSITORY" \
-            --body-file final-review.md
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "DRY_RUN=true; uploading final-review.md as artifact instead of posting comment"
+            mkdir -p /tmp/artifacts
+            cp final-review.md /tmp/artifacts/final-review.md
+            # use GitHub Actions upload-artifact action instead of gh when DRY_RUN
+            echo "final-review.md ready as artifact"
+          else
+            gh pr comment "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body-file final-review.md
+          fi
 
   # ---------------------------------------------------------------------------
   # Manual review requested with:
@@ -242,30 +273,53 @@ jobs:
     steps:
       - name: Check commenter permission
         id: permission
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           AUTHOR: ${{ github.event.comment.user.login }}
         run: |
+          set -e
+
           PERMISSION=$(gh api \
             "/repos/${GITHUB_REPOSITORY}/collaborators/${AUTHOR}/permission" \
             --repo "$GITHUB_REPOSITORY" \
-            --jq '.permission' 2>/dev/null || echo "none")
+            --jq '.permission' 2>/dev/null) || RC=$?
 
-          echo "permission=${PERMISSION}" >> "$GITHUB_OUTPUT"
+          if [ -z "$PERMISSION" ]; then
+            echo "permission=error" >> "$GITHUB_OUTPUT"
+            echo "api_error=true" >> "$GITHUB_OUTPUT"
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
+            echo "Failed to query collaborator permission (API error)."
+          else
+            echo "permission=${PERMISSION}" >> "$GITHUB_OUTPUT"
+            echo "api_error=false" >> "$GITHUB_OUTPUT"
+            case "$PERMISSION" in
+              admin|maintain|push|triage)
+                echo "authorized=true" >> "$GITHUB_OUTPUT"
+                echo "User has sufficient repository access."
+                ;;
+              *)
+                echo "authorized=false" >> "$GITHUB_OUTPUT"
+                echo "User does not have permission to request an AI review."
+                ;;
+            esac
+          fi
 
-          case "$PERMISSION" in
-            admin|maintain|push|triage)
-              echo "User has sufficient repository access."
-              ;;
-            *)
-              echo "User does not have permission to request an AI review."
-              exit 1
-              ;;
-          esac
+      - name: Notify commenter of API error
+        if: ${{ steps.permission.outputs.api_error == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ github.event.comment.user.login }}
+        run: |
+            echo "@${AUTHOR}, your /ai-review request could not be processed" > comment-body.txt
+            echo "because the server could not verify repository permissions due to an API error." >> comment-body.txt
+            echo "Please try again. If the problem persists, contact a repository administrator." >> comment-body.txt
+            gh pr comment "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body-file comment-body.txt
 
       - name: Notify commenter of insufficient permissions
-        if: ${{ steps.permission.outcome == 'failure' }}
+        if: ${{ steps.permission.outputs.api_error == 'false' && steps.permission.outputs.authorized == 'false' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
@@ -278,8 +332,21 @@ jobs:
             gh pr comment "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
               --body-file comment-body.txt
+      - name: Check Copilot token
+        id: check-token-manual
+        if: ${{ steps.permission.outputs.authorized == 'true' }}
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+        run: |
+          if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
+            echo "COPILOT_TOKEN not configured; skipping AI review."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Get PR information
-        if: ${{ steps.permission.outcome == 'success' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
@@ -290,7 +357,7 @@ jobs:
             > pr-info.json
 
       - name: Get PR diff
-        if: ${{ steps.permission.outcome == 'success' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
@@ -310,12 +377,19 @@ jobs:
           fi
 
       - name: Install Copilot CLI
-        if: ${{ steps.permission.outcome == 'success' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
         run: |
           npm install -g @github/copilot@1.0.87
 
+      - name: Run project build and linters
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        run: |
+          set -o pipefail
+          ./gradlew check --no-daemon > build.log 2>&1 || echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
+          tail -n 500 build.log > build_summary.txt || true
+
       - name: Run Copilot review
-        if: ${{ steps.permission.outcome == 'success' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number }}
@@ -391,17 +465,26 @@ jobs:
             fi
           } >> review-prompt.txt
 
-          copilot \
-            -p "$(cat review-prompt.txt)" \
-            -s \
-            --no-ask-user \
-            > review.md
+          if [ -f build_summary.txt ]; then
+            {
+              echo
+              echo "BUILD & LINT SUMMARY:"
+              cat build_summary.txt
+              if [ "${BUILD_FAILED-}" = "true" ]; then
+                echo
+                echo "NOTE: Build or linters failed; logs included above."
+              fi
+            } >> review-prompt.txt
+          fi
+
+          copilot -p "$(cat review-prompt.txt)" -s --no-ask-user > review.md
 
       - name: Post review to PR
-        if: ${{ steps.permission.outcome == 'success' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
+          DRY_RUN: ${{ env.DRY_RUN || 'false' }}
         run: |
           {
             echo "## 🤖 AI Code Review"
@@ -410,7 +493,15 @@ jobs:
             echo
             cat review.md
             } > final-review.md
-          gh pr comment "$PR_NUMBER" \
-            --body-file final-review.md
+
+          if [ "${DRY_RUN}" = "true" ]; then
+            echo "DRY_RUN=true; uploading final-review.md as artifact instead of posting comment"
+            mkdir -p /tmp/artifacts
+            cp final-review.md /tmp/artifacts/final-review.md
+            echo "final-review.md ready as artifact"
+          else
+            gh pr comment "$PR_NUMBER" \
+              --body-file final-review.md
+          fi
 
 

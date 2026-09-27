@@ -1,0 +1,36 @@
+name: Validate Workflows
+
+on:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run actionlint
+        uses: ridedott/actionlint@v1
+
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install yamllint
+          sudo apt-get update -y
+          sudo apt-get install -y shellcheck
+
+      - name: Run yamllint
+        run: yamllint .github/workflows || true
+
+      - name: Run shellcheck on workflow run blocks (best-effort)
+        run: |
+          # Extract 'run:' blocks and run shellcheck where possible
+          grep -Poz "(?s)run: \|\n\s*(.*?)\n\s*(?=(?:[^\n]*\n)*\s*- name:|$)" .github/workflows/*.yml | \
+            sed -n 's/run: |//p' > /tmp/extracted_runs.sh || true
+          if [ -s /tmp/extracted_runs.sh ]; then
+            shellcheck /tmp/extracted_runs.sh || true
+          fi
+
+      - name: Validate ai-review specifics
+        run: .github/scripts/validate_ai_review.sh
