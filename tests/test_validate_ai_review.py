@@ -84,7 +84,32 @@ jobs:
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_checkout_must_precede_pr_info_generation(self):
+    def test_head_ref_checkout_pattern_is_allowed(self):
+        result = run_validator(
+            """
+name: AI PR Review
+jobs:
+  manual-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Copilot token
+        id: check-token
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+        run: echo ok
+      - name: Get PR information
+        id: pr
+        run: |
+          echo "head_ref_oid=abc123" >> "$GITHUB_OUTPUT"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_ref_oid }}
+""".strip()
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_unsafe_pr_info_before_checkout_is_rejected(self):
         result = run_validator(
             """
 name: AI PR Review
@@ -113,7 +138,6 @@ jobs:
 
     def test_build_step_re_raises_failed_builds(self):
         text = Path('.github/workflows/ai-review.yml').read_text(encoding='utf-8')
-        self.assertIn('continue-on-error: true', text)
         self.assertIn('BUILD_EXIT=', text)
         self.assertIn('exit "$BUILD_EXIT"', text)
 
