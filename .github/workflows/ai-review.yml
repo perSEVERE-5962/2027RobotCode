@@ -176,10 +176,11 @@ jobs:
             fi
           } >> review-prompt.txt
 
+          # The review prompt contains only PR metadata and diff text. Do not allow
+          # the model to invoke repository shell tools from attacker-controlled content.
           copilot \
             -p "$(cat review-prompt.txt)" \
             -s \
-            --allow-tool='shell(git:*)' \
             --no-ask-user \
             > review.md
 
@@ -369,7 +370,6 @@ jobs:
           copilot \
             -p "$(cat review-prompt.txt)" \
             -s \
-            --allow-tool='shell(git:*)' \
             --no-ask-user \
             > review.md
 
