@@ -277,6 +277,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --body-file comment-body.txt
       - name: Get PR information
+        if: ${{ steps.permission.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
@@ -287,6 +288,7 @@ jobs:
             > pr-info.json
 
       - name: Get PR diff
+        if: ${{ steps.permission.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
@@ -306,10 +308,12 @@ jobs:
           fi
 
       - name: Install Copilot CLI
+        if: ${{ steps.permission.outcome == 'success' }}
         run: |
           npm install -g @github/copilot@1.0.87
 
       - name: Run Copilot review
+        if: ${{ steps.permission.outcome == 'success' }}
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number }}
@@ -392,6 +396,7 @@ jobs:
             > review.md
 
       - name: Post review to PR
+        if: ${{ steps.permission.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
