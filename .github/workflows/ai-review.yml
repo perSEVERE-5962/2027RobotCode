@@ -40,7 +40,7 @@ jobs:
   # ---------------------------------------------------------------------------
   automatic-review:
     name: Automatic AI Review
-    timeout-minutes: 10
+    timeout-minutes: 20
     # Only review pull requests from branches in this repository. Forked PRs are
     # left to the manual /ai-review flow, which requires explicit repository access.
     if: >
@@ -97,13 +97,13 @@ jobs:
           set -e
 
           if [ "$DIFF_EXIT" -ne 0 ]; then
-            echo "gh pr diff failed with exit code ${DIFF_EXIT}; continuing with an empty diff."
+            echo "gh pr diff failed with exit code ${DIFF_EXIT}; aborting review because the PR diff is unavailable."
             echo "No PR diff available for this review." > pr.diff
             {
               echo "DIFF_UNAVAILABLE=true"
               echo "DIFF_TRUNCATED=false"
             } >> "$GITHUB_ENV"
-            exit 0
+            exit 1
           fi
 
           echo "DIFF_UNAVAILABLE=false" >> "$GITHUB_ENV"
@@ -135,6 +135,17 @@ jobs:
             : > changed-files.txt
           fi
 
+      - name: Set up Java
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Checkout repository
         if: ${{ steps.check-token.outputs.skip != 'true' }}
         uses: actions/checkout@v4
@@ -157,7 +168,7 @@ jobs:
           npm install -g @github/copilot@1.0.87
 
       - name: Run Copilot review
-        if: ${{ steps.check-token.outputs.skip != 'true' }}
+        if: ${{ steps.check-token.outputs.skip != 'true' && env.DIFF_UNAVAILABLE != 'true' }}
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -285,7 +296,7 @@ jobs:
           copilot -p "$(cat review-prompt.txt)" --allow-tool='shell(git:*)' -s --no-ask-user > review.md
 
       - name: Post review to PR
-        if: ${{ steps.check-token.outputs.skip != 'true' }}
+        if: ${{ steps.check-token.outputs.skip != 'true' && env.DIFF_UNAVAILABLE != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -327,7 +338,7 @@ jobs:
   # ---------------------------------------------------------------------------
   manual-review:
     name: Manual AI Review
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
       PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.issue.number || github.event.pull_request.number }}
@@ -522,13 +533,13 @@ jobs:
           set -e
 
           if [ "$DIFF_EXIT" -ne 0 ]; then
-            echo "gh pr diff failed with exit code ${DIFF_EXIT}; continuing with an empty diff."
+            echo "gh pr diff failed with exit code ${DIFF_EXIT}; aborting review because the PR diff is unavailable."
             echo "No PR diff available for this review." > pr.diff
             {
               echo "DIFF_UNAVAILABLE=true"
               echo "DIFF_TRUNCATED=false"
             } >> "$GITHUB_ENV"
-            exit 0
+            exit 1
           fi
 
           echo "DIFF_UNAVAILABLE=false" >> "$GITHUB_ENV"
@@ -554,6 +565,17 @@ jobs:
             : > changed-files.txt
           fi
 
+      - name: Set up Java
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: Set up Gradle
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Checkout repository
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         uses: actions/checkout@v4
@@ -575,7 +597,7 @@ jobs:
           npm install -g @github/copilot@1.0.87
 
       - name: Run Copilot review
-        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' && env.DIFF_UNAVAILABLE != 'true' }}
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
           PR_NUMBER: ${{ env.PR_NUMBER }}
@@ -682,7 +704,7 @@ jobs:
           copilot -p "$(cat review-prompt.txt)" --allow-tool='shell(git:*)' -s --no-ask-user > review.md
 
       - name: Post review to PR
-        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' && env.DIFF_UNAVAILABLE != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ env.PR_NUMBER }}
