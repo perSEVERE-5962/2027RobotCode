@@ -49,10 +49,9 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
 
     # Do not expose the Copilot token at the job level; scope it to steps that need it.
+    # workflow_dispatch dry runs are handled by the manual-review flow instead.
 
     runs-on: ubuntu-latest
-    env:
-      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
 
     steps:
       - name: Check Copilot token
@@ -84,13 +83,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --body-file comment-body.txt
 
-      - name: Checkout repository
-        if: ${{ steps.check-token.outputs.skip != 'true' }}
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
       - name: Get PR information
         if: ${{ steps.check-token.outputs.skip != 'true' }}
         id: pr
@@ -104,6 +96,33 @@ jobs:
             --json title,body,baseRefName,headRefName,headRefOid \
             --repo "$GITHUB_REPOSITORY" \
             > pr-info.json
+
+          HEAD_SHA=$(jq -r '.headRefOid // empty' pr-info.json 2>/dev/null || true)
+          if [ -z "$HEAD_SHA" ]; then
+            echo "Could not determine the PR head SHA from the PR metadata; refusing to review an unknown ref." >&2
+            exit 1
+          fi
+
+          echo "head_ref_oid=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_ref_oid }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify checked-out revision
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
+        run: |
+          EXPECTED_SHA="${{ steps.pr.outputs.head_ref_oid }}"
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Expected checkout at $EXPECTED_SHA but HEAD is $ACTUAL_SHA" >&2
+            exit 1
+          fi
+          echo "Checked out PR head at $ACTUAL_SHA"
 
       - name: Get PR diff
         if: ${{ steps.check-token.outputs.skip != 'true' }}
@@ -174,8 +193,13 @@ jobs:
         run: |
           set -o pipefail
           if [ -f ./gradlew ]; then chmod +x ./gradlew; fi
-          ./gradlew check --no-daemon > build.log 2>&1 || echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
+          ./gradlew check --no-daemon > build.log 2>&1
+          BUILD_EXIT=$?
           tail -n 500 build.log > build_summary.txt || true
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
+            exit "$BUILD_EXIT"
+          fi
 
       - name: Install Copilot CLI
         if: ${{ steps.check-token.outputs.skip != 'true' }}
@@ -307,8 +331,8 @@ jobs:
           fi
 
           # The review prompt contains PR metadata, diff, and build summary.
-          # Do not allow the model to invoke repository shell tools from attacker-controlled content.
-          copilot -p "$(cat review-prompt.txt)" --allow-tool='shell(git:*)' -s --no-ask-user > review.md
+          # Only allow the read-only git access required for the already-provided PR data.
+          copilot -p "$(cat review-prompt.txt)" --allow-tool='shell(git:status)' -s --no-ask-user > review.md
 
       - name: Post review to PR
         if: ${{ steps.check-token.outputs.skip != 'true' && env.DIFF_UNAVAILABLE != 'true' }}
@@ -537,13 +561,6 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --body-file comment-body.txt
 
-      - name: Checkout repository
-        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
       - name: Get PR information
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         id: pr
@@ -563,6 +580,25 @@ jobs:
           fi
 
           echo "head_ref_oid=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_ref_oid }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify checked-out revision
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        run: |
+          EXPECTED_SHA="${{ steps.pr.outputs.head_ref_oid }}"
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Expected checkout at $EXPECTED_SHA but HEAD is $ACTUAL_SHA" >&2
+            exit 1
+          fi
+          echo "Checked out PR head at $ACTUAL_SHA"
 
       - name: Get PR diff
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
@@ -627,8 +663,13 @@ jobs:
         run: |
           set -o pipefail
           if [ -f ./gradlew ]; then chmod +x ./gradlew; fi
-          ./gradlew check --no-daemon > build.log 2>&1 || echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
+          ./gradlew check --no-daemon > build.log 2>&1
+          BUILD_EXIT=$?
           tail -n 500 build.log > build_summary.txt || true
+          if [ "$BUILD_EXIT" -ne 0 ]; then
+            echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
+            exit "$BUILD_EXIT"
+          fi
 
       - name: Install Copilot CLI
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
@@ -740,7 +781,8 @@ jobs:
             } >> review-prompt.txt
           fi
 
-          copilot -p "$(cat review-prompt.txt)" --allow-tool='shell(git:*)' -s --no-ask-user > review.md
+          # No repository shell access is required for this review.
+          copilot -p "$(cat review-prompt.txt)" -s --no-ask-user > review.md
 
       - name: Post review to PR
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' && env.DIFF_UNAVAILABLE != 'true' }}

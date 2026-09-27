@@ -105,6 +105,18 @@ jobs:
         )
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_manual_review_checks_out_pr_head_sha(self):
+        text = Path('.github/workflows/ai-review.yml').read_text(encoding='utf-8')
+        self.assertIn('ref: ${{ steps.pr.outputs.head_ref_oid }}', text)
+        self.assertIn('git rev-parse HEAD', text)
+        self.assertIn('head_ref_oid=${HEAD_SHA}', text)
+
+    def test_build_step_re_raises_failed_builds(self):
+        text = Path('.github/workflows/ai-review.yml').read_text(encoding='utf-8')
+        self.assertIn('continue-on-error: true', text)
+        self.assertIn('BUILD_EXIT=', text)
+        self.assertIn('exit "$BUILD_EXIT"', text)
+
 
 if __name__ == '__main__':
     unittest.main()

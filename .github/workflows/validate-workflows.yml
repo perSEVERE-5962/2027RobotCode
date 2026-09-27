@@ -14,6 +14,7 @@ jobs:
         run: |
           curl -sSL "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz" \
             -o actionlint.tar.gz
+          echo "2aeb5d8428fcbdf86d3db384d4be46b2a5e2191a2694d6f7f58f8a8917b9f7b6  actionlint.tar.gz" | sha256sum -c -
           tar -xzf actionlint.tar.gz
           sudo install actionlint /usr/local/bin/
 
