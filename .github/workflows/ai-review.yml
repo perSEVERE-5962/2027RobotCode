@@ -12,6 +12,12 @@ on:
   issue_comment:
     types:
       - created
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'If true, do not post comments; upload review as artifact instead.'
+        required: false
+        default: 'false'
 
 # Prevent multiple reviews from running simultaneously for the same PR.
 concurrency:
@@ -41,6 +47,8 @@ jobs:
     # Do not expose the Copilot token at the job level; scope it to steps that need it.
 
     runs-on: ubuntu-latest
+    env:
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
 
     steps:
       - name: Check Copilot token
@@ -95,14 +103,18 @@ jobs:
             echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
           fi
 
-      - name: Install Copilot CLI
+      - name: Checkout repository
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run project build and linters
         if: ${{ steps.check-token.outputs.skip != 'true' }}
         run: |
-          # Run project build and linters before invoking Copilot so the model
-          # can see compile/test/lint failures and suggest comprehensive fixes.
           set -o pipefail
+          if [ -f ./gradlew ]; then chmod +x ./gradlew; fi
           ./gradlew check --no-daemon > build.log 2>&1 || echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
-          # create a short summary for inclusion in the review prompt
           tail -n 500 build.log > build_summary.txt || true
 
         
@@ -220,7 +232,7 @@ jobs:
 
           # The review prompt contains PR metadata, diff, and build summary.
           # Do not allow the model to invoke repository shell tools from attacker-controlled content.
-          copilot -p "$(cat review-prompt.txt)" -s --no-ask-user > review.md
+          copilot -p "$(cat review-prompt.txt)" --allow-tool='shell(git:*)' -s --no-ask-user > review.md
 
       - name: Post review to PR
         if: ${{ steps.check-token.outputs.skip != 'true' }}
@@ -242,16 +254,19 @@ jobs:
           } > final-review.md
 
           if [ "${DRY_RUN}" = "true" ]; then
-            echo "DRY_RUN=true; uploading final-review.md as artifact instead of posting comment"
-            mkdir -p /tmp/artifacts
-            cp final-review.md /tmp/artifacts/final-review.md
-            # use GitHub Actions upload-artifact action instead of gh when DRY_RUN
-            echo "final-review.md ready as artifact"
+            echo "DRY_RUN=true; final-review.md is ready as artifact"
           else
             gh pr comment "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
               --body-file final-review.md
           fi
+
+      - name: Upload final review artifact
+        if: ${{ env.DRY_RUN == 'true' && steps.check-token.outputs.skip != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-review
+          path: final-review.md
 
   # ---------------------------------------------------------------------------
   # Manual review requested with:
@@ -263,6 +278,8 @@ jobs:
   manual-review:
     name: Manual AI Review
     timeout-minutes: 10
+    env:
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
     if: >
       github.event_name == 'issue_comment' &&
       github.event.issue.pull_request &&
@@ -376,17 +393,24 @@ jobs:
             echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
           fi
 
-      - name: Install Copilot CLI
+      - name: Checkout repository
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
-        run: |
-          npm install -g @github/copilot@1.0.87
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Run project build and linters
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
         run: |
           set -o pipefail
+          if [ -f ./gradlew ]; then chmod +x ./gradlew; fi
           ./gradlew check --no-daemon > build.log 2>&1 || echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
           tail -n 500 build.log > build_summary.txt || true
+
+      - name: Install Copilot CLI
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        run: |
+          npm install -g @github/copilot@1.0.87
 
       - name: Run Copilot review
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
@@ -477,7 +501,7 @@ jobs:
             } >> review-prompt.txt
           fi
 
-          copilot -p "$(cat review-prompt.txt)" -s --no-ask-user > review.md
+          copilot -p "$(cat review-prompt.txt)" --allow-tool='shell(git:*)' -s --no-ask-user > review.md
 
       - name: Post review to PR
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
@@ -495,13 +519,17 @@ jobs:
             } > final-review.md
 
           if [ "${DRY_RUN}" = "true" ]; then
-            echo "DRY_RUN=true; uploading final-review.md as artifact instead of posting comment"
-            mkdir -p /tmp/artifacts
-            cp final-review.md /tmp/artifacts/final-review.md
-            echo "final-review.md ready as artifact"
+            echo "DRY_RUN=true; final-review.md is ready as artifact"
           else
             gh pr comment "$PR_NUMBER" \
               --body-file final-review.md
           fi
+
+      - name: Upload final review artifact
+        if: ${{ env.DRY_RUN == 'true' && steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-review
+          path: final-review.md
 
 
