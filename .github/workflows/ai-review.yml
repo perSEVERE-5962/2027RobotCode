@@ -83,9 +83,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          set +e
           gh pr diff "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            > pr.diff
+            > pr.diff 2> pr-diff.err
+          DIFF_EXIT=$?
+          set -e
+
+          if [ "$DIFF_EXIT" -ne 0 ]; then
+            echo "gh pr diff failed with exit code ${DIFF_EXIT}; continuing with an empty diff."
+            echo "No PR diff available for this review." > pr.diff
+            echo "DIFF_UNAVAILABLE=true" >> "$GITHUB_ENV"
+            echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "DIFF_UNAVAILABLE=false" >> "$GITHUB_ENV"
 
           # Prevent unexpectedly huge prompts.
           # The full diff is still available through GitHub if necessary.
@@ -209,7 +222,11 @@ jobs:
             printf '%s\n' "$PR_TITLE"
             echo
             echo "PR DIFF:"
-            cat pr.diff
+            if [ -f pr.diff ]; then
+              cat pr.diff
+            else
+              echo "PR diff unavailable for this review."
+            fi
 
             if [ "$DIFF_TRUNCATED" = "true" ]; then
               echo
@@ -379,9 +396,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
         run: |
+          set +e
           gh pr diff "$PR_NUMBER" \
             --repo "$GITHUB_REPOSITORY" \
-            > pr.diff
+            > pr.diff 2> pr-diff.err
+          DIFF_EXIT=$?
+          set -e
+
+          if [ "$DIFF_EXIT" -ne 0 ]; then
+            echo "gh pr diff failed with exit code ${DIFF_EXIT}; continuing with an empty diff."
+            echo "No PR diff available for this review." > pr.diff
+            echo "DIFF_UNAVAILABLE=true" >> "$GITHUB_ENV"
+            echo "DIFF_TRUNCATED=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "DIFF_UNAVAILABLE=false" >> "$GITHUB_ENV"
 
           MAX_BYTES=200000
 
@@ -481,7 +511,11 @@ jobs:
             printf '%s\n' "$PR_TITLE"
             echo
             echo "CURRENT PR DIFF:"
-            cat pr.diff
+            if [ -f pr.diff ]; then
+              cat pr.diff
+            else
+              echo "PR diff unavailable for this review."
+            fi
 
             if [ "$DIFF_TRUNCATED" = "true" ]; then
               echo
