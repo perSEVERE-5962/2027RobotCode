@@ -138,8 +138,13 @@ jobs:
 
     def test_build_step_re_raises_failed_builds(self):
         text = Path('.github/workflows/ai-review.yml').read_text(encoding='utf-8')
-        self.assertIn('BUILD_EXIT=', text)
-        self.assertIn('exit "$BUILD_EXIT"', text)
+        self.assertIn('set +e', text)
+        self.assertIn('BUILD_EXIT=$?', text)
+        self.assertIn('set -e', text)
+        self.assertIn('echo "BUILD_FAILED=true" >> "$GITHUB_ENV"', text)
+        self.assertIn('Fail if the build failed', text)
+        self.assertIn('if: ${{ always() && env.BUILD_FAILED == \'true\' }}', text)
+        self.assertIn('run: exit 1', text)
 
 
 if __name__ == '__main__':

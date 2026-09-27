@@ -193,12 +193,13 @@ jobs:
         run: |
           set -o pipefail
           if [ -f ./gradlew ]; then chmod +x ./gradlew; fi
+          set +e
           ./gradlew check --no-daemon > build.log 2>&1
           BUILD_EXIT=$?
+          set -e
           tail -n 500 build.log > build_summary.txt || true
           if [ "$BUILD_EXIT" -ne 0 ]; then
             echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
-            exit "$BUILD_EXIT"
           fi
 
       - name: Install Copilot CLI
@@ -367,6 +368,10 @@ jobs:
         with:
           name: final-review
           path: final-review.md
+
+      - name: Fail if the build failed
+        if: ${{ always() && env.BUILD_FAILED == 'true' }}
+        run: exit 1
 
   # ---------------------------------------------------------------------------
   # Manual review requested with:
@@ -663,12 +668,13 @@ jobs:
         run: |
           set -o pipefail
           if [ -f ./gradlew ]; then chmod +x ./gradlew; fi
+          set +e
           ./gradlew check --no-daemon > build.log 2>&1
           BUILD_EXIT=$?
+          set -e
           tail -n 500 build.log > build_summary.txt || true
           if [ "$BUILD_EXIT" -ne 0 ]; then
             echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
-            exit "$BUILD_EXIT"
           fi
 
       - name: Install Copilot CLI
@@ -813,5 +819,9 @@ jobs:
         with:
           name: final-review
           path: final-review.md
+
+      - name: Fail if the build failed
+        if: ${{ always() && env.BUILD_FAILED == 'true' }}
+        run: exit 1
 
 
