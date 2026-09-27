@@ -44,6 +44,28 @@ jobs:
         )
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_step_level_token_is_allowed(self):
+        result = run_validator(
+            """
+name: AI PR Review
+jobs:
+  automatic-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Copilot token
+        id: check-token
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+        run: |
+          if [ -z "$COPILOT_GITHUB_TOKEN" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+""".strip()
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_unrelated_job_level_env_does_not_poison_later_step_scoping(self):
         result = run_validator(
             """
@@ -61,6 +83,27 @@ jobs:
 """.strip()
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_checkout_must_precede_pr_info_generation(self):
+        result = run_validator(
+            """
+name: AI PR Review
+jobs:
+  automatic-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Copilot token
+        id: check-token
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+        run: echo ok
+      - name: Get PR information
+        run: echo pr > pr-info.json
+      - name: Checkout repository
+        uses: actions/checkout@v4
+""".strip()
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == '__main__':

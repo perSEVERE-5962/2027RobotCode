@@ -10,13 +10,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install actionlint
+        run: |
+          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz" \
+            -o actionlint.tar.gz
+          tar -xzf actionlint.tar.gz
+          sudo install actionlint /usr/local/bin/
+
       - name: Run actionlint
-        uses: rhysd/actionlint@v1.7.12
+        run: actionlint .github/workflows/*.yml
 
       - name: Install linters
         run: |
           python -m pip install --upgrade pip
-          pip install yamllint
+          pip install yamllint pyyaml
           sudo apt-get update -y
           sudo apt-get install -y shellcheck
 
@@ -74,11 +81,13 @@ jobs:
               tmp.write('\n\n'.join(run_blocks))
               tmp_path = tmp.name
 
+          import sys
+
           proc = subprocess.run(['shellcheck', tmp_path], capture_output=True, text=True)
           if proc.stdout:
               print(proc.stdout)
           if proc.stderr:
-              print(proc.stderr, file=os.sys.stderr)
+              print(proc.stderr, file=sys.stderr)
           raise SystemExit(proc.returncode)
           PY
 

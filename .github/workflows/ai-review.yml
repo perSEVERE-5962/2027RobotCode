@@ -69,6 +69,28 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Notify about missing Copilot token
+        if: ${{ steps.check-token.outputs.skip == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          printf '%s\n' \
+            "AI review was skipped because the repository secret COPILOT_TOKEN is not configured." \
+            "Add the secret and push a new commit to trigger the review." \
+            > comment-body.txt
+
+          gh pr comment "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file comment-body.txt
+
+      - name: Checkout repository
+        if: ${{ steps.check-token.outputs.skip != 'true' }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Get PR information
         if: ${{ steps.check-token.outputs.skip != 'true' }}
         id: pr
@@ -147,13 +169,6 @@ jobs:
         if: ${{ steps.check-token.outputs.skip != 'true' }}
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Checkout repository
-        if: ${{ steps.check-token.outputs.skip != 'true' }}
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
       - name: Run project build and linters
         if: ${{ steps.check-token.outputs.skip != 'true' }}
         run: |
@@ -162,7 +177,6 @@ jobs:
           ./gradlew check --no-daemon > build.log 2>&1 || echo "BUILD_FAILED=true" >> "$GITHUB_ENV"
           tail -n 500 build.log > build_summary.txt || true
 
-        
       - name: Install Copilot CLI
         if: ${{ steps.check-token.outputs.skip != 'true' }}
         run: |
@@ -364,14 +378,13 @@ jobs:
         run: |
           set -e
 
-          PERMISSION_RESPONSE=$(gh api \
+          HTTP_STATUS=$(gh api \
             "/repos/${GITHUB_REPOSITORY}/collaborators/${AUTHOR}/permission" \
-            --repo "$GITHUB_REPOSITORY" \
-            --include 2>/dev/null || true)
-
-          HTTP_STATUS=$(printf '%s\n' "$PERMISSION_RESPONSE" | awk 'NR == 1 { print $2 }')
-          PERMISSION_BODY=$(printf '%s\n' "$PERMISSION_RESPONSE" | awk 'BEGIN { found = 0 } { if (found) print; if ($0 == "") found = 1 }')
-          PERMISSION=$(printf '%s\n' "$PERMISSION_BODY" | jq -r '.permission // empty' 2>/dev/null || true)
+            -o /dev/null \
+            -w '%{http_code}' 2>/dev/null || true)
+          PERMISSION=$(gh api \
+            "/repos/${GITHUB_REPOSITORY}/collaborators/${AUTHOR}/permission" \
+            --jq '.permission // empty' 2>/dev/null || true)
 
           if [ "${HTTP_STATUS}" = "404" ]; then
             {
@@ -458,6 +471,22 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Notify about missing Copilot token
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          AUTHOR: ${{ github.event.comment.user.login || github.actor }}
+        run: |
+          printf '%s\n' \
+            "@${AUTHOR}, AI review was skipped because the repository secret COPILOT_TOKEN is not configured." \
+            "Add the secret and request another review." \
+            > comment-body.txt
+
+          gh pr comment "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file comment-body.txt
+
       - name: Check PR source repository
         id: pr-source
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
@@ -508,6 +537,13 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --body-file comment-body.txt
 
+      - name: Checkout repository
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Get PR information
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         id: pr
@@ -520,13 +556,13 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             > pr-info.json
 
-          HEAD_SHA=$(gh pr view "$PR_NUMBER" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json headRefOid \
-            --jq '.headRefOid' 2>/dev/null || true)
-          if [ -n "$HEAD_SHA" ]; then
-            echo "head_ref_oid=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          HEAD_SHA=$(jq -r '.headRefOid // empty' pr-info.json 2>/dev/null || true)
+          if [ -z "$HEAD_SHA" ]; then
+            echo "Could not determine the PR head SHA from the PR metadata; refusing to checkout an unknown ref." >&2
+            exit 1
           fi
+
+          echo "head_ref_oid=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Get PR diff
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
@@ -585,14 +621,6 @@ jobs:
       - name: Set up Gradle
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         uses: gradle/actions/setup-gradle@v4
-
-      - name: Checkout repository
-        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr.outputs.head_ref_oid }}
-          fetch-depth: 0
-          persist-credentials: false
 
       - name: Run project build and linters
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}

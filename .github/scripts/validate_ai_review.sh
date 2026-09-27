@@ -24,65 +24,57 @@ grep -q "id: check-token-manual" "$WF" || fail "manual-review missing 'check-tok
 grep -q "id: check-token" "$WF" || fail "automatic-review missing 'id: check-token' step"
 
 # Ensure no job-level COPILOT_GITHUB_TOKEN env is used; it must be step-scoped.
+# Also enforce checkout-before-PR-data generation so pr-info.json/pr.diff/changed-files.txt
+# are not removed when actions/checkout resets the workspace for a non-Git checkout.
 python3 - "$WF" <<'PY'
 import sys
 from pathlib import Path
 
+try:
+    import yaml
+except ModuleNotFoundError as exc:
+    raise SystemExit("PyYAML is required for workflow validation. Install it with 'python3 -m pip install pyyaml'.") from exc
+
 wf = Path(sys.argv[1])
-text = wf.read_text(encoding='utf-8')
-lines = text.splitlines()
+doc = yaml.safe_load(wf.read_text(encoding='utf-8')) or {}
 
-# We only reject job-level env declarations, not step-level env blocks.
-# A job-level env sits directly under a job (e.g. "    env:"), while a step-level
-# env sits inside a step body (e.g. "        env:" under "- name:").
-job_indent = None
-step_indent = None
-job_env = False
+jobs = doc.get('jobs', {})
+if not isinstance(jobs, dict):
+    raise SystemExit("Workflow does not contain a valid jobs map.")
 
-for idx, line in enumerate(lines):
-    stripped = line.strip()
-    if not stripped or stripped.startswith('#'):
+for job_name, job in jobs.items():
+    if not isinstance(job, dict):
         continue
 
-    indent = len(line) - len(line.lstrip(' '))
+    job_env = job.get('env', {})
+    if isinstance(job_env, dict) and 'COPILOT_GITHUB_TOKEN' in job_env:
+        raise SystemExit(f"Job-level COPILOT_GITHUB_TOKEN is present in job '{job_name}'; scope it to a step env block.")
 
-    if stripped.startswith('jobs:'):
-        job_indent = 0
-        step_indent = None
-        job_env = False
+    steps = job.get('steps', [])
+    if not isinstance(steps, list):
         continue
 
-    if job_indent is not None and indent == 2 and stripped.endswith(':') and not stripped.startswith('-'):
-        # A new job starts at this indentation; reset any previous step/job env state.
-        job_indent = indent
-        step_indent = None
-        job_env = False
-        continue
+    checkout_index = None
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
 
-    if stripped.startswith('- name:') or stripped.startswith('- id:'):
-        step_indent = indent
-        job_env = False
-        continue
+        step_name = str(step.get('name', ''))
+        uses = str(step.get('uses', ''))
+        if 'actions/checkout' in uses or 'Checkout repository' in step_name:
+            checkout_index = index
+            break
 
-    if stripped == 'env:':
-        if step_indent is None and job_indent is not None and indent > job_indent and indent <= job_indent + 2:
-            job_env = True
-        else:
-            job_env = False
-        continue
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
 
-    if stripped.startswith('COPILOT_GITHUB_TOKEN:'):
-        if job_env:
-            raise SystemExit("Job-level COPILOT_GITHUB_TOKEN is present; scope it to a step env block.")
-        if step_indent is None and job_indent is not None and indent <= job_indent + 2:
-            raise SystemExit("COPILOT_GITHUB_TOKEN is not clearly scoped to a step env block.")
-
-    if indent == 0 and stripped.endswith(':') and not stripped.startswith('-'):
-        # Leaving the current job context. A later env block is only job-level if it is
-        # nested under the job itself.
-        step_indent = None
-        job_indent = None
-        job_env = False
+        step_name = str(step.get('name', ''))
+        if step_name in {'Get PR information', 'Get PR diff', 'Get changed files'}:
+            if checkout_index is None or index < checkout_index:
+                raise SystemExit(
+                    f"Job '{job_name}' writes PR metadata before checkout: '{step_name}' appears before the repository checkout."
+                )
 PY
 
 # Check markdown divider spacing (echo "---" should have blank echo lines around it)
