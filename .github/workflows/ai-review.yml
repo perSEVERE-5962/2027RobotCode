@@ -399,6 +399,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Debug manual trigger event
+        if: ${{ github.event_name == 'issue_comment' }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          ISSUE_PULL_REQUEST: ${{ github.event.issue.pull_request }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          echo "DEBUG: manual trigger event_name=${EVENT_NAME}"
+          echo "DEBUG: issue_pull_request=${ISSUE_PULL_REQUEST}"
+          echo "DEBUG: issue_number=${ISSUE_NUMBER}"
+          echo "DEBUG: action=${EVENT_ACTION}"
+          echo "DEBUG: comment_body=${COMMENT_BODY}"
+
       - name: Check commenter permission
         id: permission
         env:
