@@ -21,16 +21,66 @@ jobs:
           sudo apt-get install -y shellcheck
 
       - name: Run yamllint
-        run: yamllint .github/workflows || true
+        continue-on-error: true
+        run: yamllint .github/workflows
 
       - name: Run shellcheck on workflow run blocks (best-effort)
+        continue-on-error: true
         run: |
-          # Extract 'run:' blocks and run shellcheck where possible
-          grep -Poz "(?s)run: \|\n\s*(.*?)\n\s*(?=(?:[^\n]*\n)*\s*- name:|$)" .github/workflows/*.yml | \
-            sed -n 's/run: |//p' > /tmp/extracted_runs.sh || true
-          if [ -s /tmp/extracted_runs.sh ]; then
-            shellcheck /tmp/extracted_runs.sh || true
-          fi
+          python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+          import tempfile
+
+          run_blocks = []
+          workflow_dir = '.github/workflows'
+          for name in sorted(os.listdir(workflow_dir)):
+              if not name.endswith('.yml'):
+                  continue
+              path = os.path.join(workflow_dir, name)
+              with open(path, 'r', encoding='utf-8') as f:
+                  lines = f.read().splitlines()
+
+              i = 0
+              while i < len(lines):
+                  line = lines[i]
+                  if re.match(r'^\s*run:\s*\|\s*$', line):
+                      start = i + 1
+                      # consume indented lines until the next step or yaml key at the same indent level
+                      indent = len(line) - len(line.lstrip(' '))
+                      block_lines = []
+                      i += 1
+                      while i < len(lines):
+                          s = lines[i]
+                          if s.strip() == '':
+                              block_lines.append('')
+                              i += 1
+                              continue
+                          current_indent = len(s) - len(s.lstrip(' '))
+                          if current_indent <= indent and not s.lstrip().startswith('#'):
+                              break
+                          block_lines.append(s[indent + 2:] if s.startswith(' ' * (indent + 2)) else s)
+                          i += 1
+                      run_blocks.append('\n'.join(block_lines))
+                      continue
+                  i += 1
+
+          if not run_blocks:
+              print('No workflow run blocks found to shellcheck.')
+              raise SystemExit(0)
+
+          with tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False) as tmp:
+              tmp.write('\n\n'.join(run_blocks))
+              tmp_path = tmp.name
+
+          proc = subprocess.run(['shellcheck', tmp_path], capture_output=True, text=True)
+          if proc.stdout:
+              print(proc.stdout)
+          if proc.stderr:
+              print(proc.stderr, file=os.sys.stderr)
+          raise SystemExit(proc.returncode)
+          PY
 
       - name: Validate ai-review specifics
         run: .github/scripts/validate_ai_review.sh

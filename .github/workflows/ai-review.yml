@@ -366,8 +366,7 @@ jobs:
           PERMISSION_RESPONSE=$(gh api \
             "/repos/${GITHUB_REPOSITORY}/collaborators/${AUTHOR}/permission" \
             --repo "$GITHUB_REPOSITORY" \
-            --include \
-            --silent 2>/dev/null || true)
+            --include 2>/dev/null || true)
 
           HTTP_STATUS=$(printf '%s\n' "$PERMISSION_RESPONSE" | awk 'NR == 1 { print $2 }')
           PERMISSION_BODY=$(printf '%s\n' "$PERMISSION_RESPONSE" | awk 'BEGIN { found = 0 } { if (found) print; if ($0 == "") found = 1 }')
@@ -510,6 +509,7 @@ jobs:
 
       - name: Get PR information
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
+        id: pr
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ env.PR_NUMBER }}
@@ -518,6 +518,14 @@ jobs:
             --json title,body,baseRefName,headRefName,headRefOid \
             --repo "$GITHUB_REPOSITORY" \
             > pr-info.json
+
+          HEAD_SHA=$(gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json headRefOid \
+            --jq '.headRefOid' 2>/dev/null || true)
+          if [ -n "$HEAD_SHA" ]; then
+            echo "head_ref_oid=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Get PR diff
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
@@ -580,6 +588,7 @@ jobs:
         if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'true' }}
         uses: actions/checkout@v4
         with:
+          ref: ${{ steps.pr.outputs.head_ref_oid }}
           fetch-depth: 0
           persist-credentials: false
 
