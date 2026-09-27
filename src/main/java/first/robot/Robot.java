@@ -9,6 +9,8 @@ import org.littletonrobotics.junction.wpilog.WPILOGWriter;
 
 public class Robot extends LoggedRobot {
   public Robot() {
+    super(Constants.LOOP_TIME_S);
+
     // Record metadata
     Logger.recordMetadata("ProjectName", BuildConstants.MAVEN_NAME);
     Logger.recordMetadata("BuildDate", BuildConstants.BUILD_DATE);
@@ -24,10 +26,11 @@ public class Robot extends LoggedRobot {
         });
 
     // Resolve before Logger.start so the identity lands in the log metadata
-    Logger.recordMetadata("RobotIdentity", RobotIdentity.resolve(Constants.currentMode).toString());
+    Logger.recordMetadata(
+        "RobotIdentity", RobotIdentity.resolve(Constants.CURRENT_MODE).toString());
 
     // Set up data receivers & replay source
-    switch (Constants.currentMode) {
+    switch (Constants.CURRENT_MODE) {
       case REAL:
         // Use SystemCore's home folder. The default /U/logs path is for roboRIO USB drives.
         Logger.addDataReceiver(new WPILOGWriter("/home/systemcore/logs"));
