@@ -146,6 +146,11 @@ jobs:
         self.assertIn('if: ${{ always() && env.BUILD_FAILED == \'true\' }}', text)
         self.assertIn('run: exit 1', text)
 
+    def test_manual_review_logs_skip_reason(self):
+        text = Path('.github/workflows/ai-review.yml').read_text(encoding='utf-8')
+        self.assertIn('DEBUG: /ai-review skipped because', text)
+        self.assertIn('debug_reason=', text)
+
 
 if __name__ == '__main__':
     unittest.main()

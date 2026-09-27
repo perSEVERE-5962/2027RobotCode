@@ -420,6 +420,7 @@ jobs:
               echo "permission=none"
               echo "api_error=false"
               echo "authorized=false"
+              echo "debug_reason=User is not a collaborator on this repository."
               echo "User is not a collaborator on this repository."
             } >> "$GITHUB_OUTPUT"
           elif [ -z "$PERMISSION" ]; then
@@ -427,6 +428,7 @@ jobs:
               echo "permission=error"
               echo "api_error=true"
               echo "authorized=false"
+              echo "debug_reason=Failed to query collaborator permission (API error)."
               echo "Failed to query collaborator permission (API error)."
             } >> "$GITHUB_OUTPUT"
           else
@@ -438,12 +440,14 @@ jobs:
               admin|maintain|push|triage)
                 {
                   echo "authorized=true"
+                  echo "debug_reason=User has sufficient repository access."
                   echo "User has sufficient repository access."
                 } >> "$GITHUB_OUTPUT"
                 ;;
               *)
                 {
                   echo "authorized=false"
+                  echo "debug_reason=User does not have permission to request an AI review."
                   echo "User does not have permission to request an AI review."
                 } >> "$GITHUB_OUTPUT"
                 ;;
@@ -456,7 +460,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ env.PR_NUMBER }}
           AUTHOR: ${{ github.event.comment.user.login || github.actor }}
+          DEBUG_REASON: ${{ steps.permission.outputs.debug_reason }}
         run: |
+            echo "DEBUG: /ai-review skipped because ${DEBUG_REASON}" >&2
             printf '%s\n' \
               "@${AUTHOR}, your /ai-review request could not be processed" \
               "because the server could not verify repository permissions due to an API error." \
@@ -473,7 +479,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ env.PR_NUMBER }}
           AUTHOR: ${{ github.event.comment.user.login || github.actor }}
+          DEBUG_REASON: ${{ steps.permission.outputs.debug_reason }}
         run: |
+            echo "DEBUG: /ai-review skipped because ${DEBUG_REASON}" >&2
             printf '%s\n' \
               "@${AUTHOR}, your /ai-review request could not be processed" \
               "because you do not have sufficient repository permissions." \
@@ -495,9 +503,13 @@ jobs:
             {
               echo "COPILOT_TOKEN not configured; skipping AI review."
               echo "skip=true"
+              echo "debug_reason=Missing COPILOT_TOKEN repository secret."
             } >> "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "skip=false"
+              echo "debug_reason=Copilot token is configured."
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Notify about missing Copilot token
@@ -506,7 +518,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ env.PR_NUMBER }}
           AUTHOR: ${{ github.event.comment.user.login || github.actor }}
+          DEBUG_REASON: ${{ steps.check-token-manual.outputs.debug_reason }}
         run: |
+          echo "DEBUG: /ai-review skipped because ${DEBUG_REASON}" >&2
           printf '%s\n' \
             "@${AUTHOR}, AI review was skipped because the repository secret COPILOT_TOKEN is not configured." \
             "Add the secret and request another review." \
@@ -533,6 +547,7 @@ jobs:
           if [ -z "$HEAD_REPO" ]; then
             {
               echo "same_repo=false"
+              echo "debug_reason=Could not determine the PR head repository; refusing to run against untrusted code."
               echo "Could not determine the PR head repository; refusing to run against untrusted code."
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -541,11 +556,13 @@ jobs:
           if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
             {
               echo "same_repo=true"
+              echo "debug_reason=Reviewing a same-repository PR only."
               echo "Reviewing a same-repository PR only."
             } >> "$GITHUB_OUTPUT"
           else
             {
               echo "same_repo=false"
+              echo "debug_reason=PR head repository is ${HEAD_REPO}; skipping review for untrusted fork PRs."
               echo "PR head repository is ${HEAD_REPO}; skipping review for untrusted fork PRs."
             } >> "$GITHUB_OUTPUT"
           fi
@@ -556,7 +573,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ env.PR_NUMBER }}
           AUTHOR: ${{ github.event.comment.user.login || github.actor }}
+          DEBUG_REASON: ${{ steps.pr-source.outputs.debug_reason }}
         run: |
+            echo "DEBUG: /ai-review skipped because ${DEBUG_REASON}" >&2
             printf '%s\n' \
               "@${AUTHOR}, /ai-review is only available for pull requests from this repository." \
               "Forked PRs are skipped to avoid running untrusted code with repository credentials." \
