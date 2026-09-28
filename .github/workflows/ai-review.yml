@@ -1,15 +1,319 @@
+---
 name: AI PR Review
 
+defaults:
+  run:
+    shell: bash
+
 on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+
+  issue_comment:
+    types:
+      - created
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Pull request number to review when manually dispatching a dry run or test review.'
+        required: false
+        default: ''
+      dry_run:
+        description: 'If true, do not post comments; upload review as artifact instead.'
+        required: false
+        default: 'false'
+
+# Prevent multiple reviews from running simultaneously for the same PR.
+concurrency:
+  group: >-
+    ai-review-pr-${{ github.event.inputs.pr_number ||
+    github.event.pull_request.number ||
+    github.event.issue.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
 
 jobs:
-  placeholder:
-    name: Placeholder
+
+  # ---------------------------------------------------------------------------
+  # Automatic review when a PR is opened or updated
+  # ---------------------------------------------------------------------------
+  automatic-review:
+    name: Automatic AI Review
+    # Only review pull requests from branches in this repository. Forked PRs are
+    # left to the manual /ai-review flow, which requires explicit repository access.
+    if: >
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+
+    uses: ./.github/workflows/run-ai-review.yml
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      review_mode: automatic
+    secrets:
+      COPILOT_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Manual review requested with:
+  #
+  #     /ai-review
+  #
+  # This runs when someone comments on a PR.
+  # ---------------------------------------------------------------------------
+  manual-review:
+    name: Manual AI Review
+    timeout-minutes: 20
+    env:
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.issue.number || github.event.pull_request.number }}
+    if: >
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(github.event.comment.body, '/ai-review')
+      ) || (
+        github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.pr_number != ''
+      )
+
     runs-on: ubuntu-latest
 
+    outputs:
+      pr_number: ${{ steps.set-job-outputs.outputs.pr_number }}
+      dry_run: ${{ steps.set-job-outputs.outputs.dry_run }}
+      authorized: ${{ steps.set-job-outputs.outputs.authorized }}
+      skip: ${{ steps.set-job-outputs.outputs.skip }}
+      same_repo: ${{ steps.set-job-outputs.outputs.same_repo }}
+
     steps:
-      - name: Placeholder
+      - name: Check commenter permission
+        id: permission
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHOR: ${{ github.event.comment.user.login || github.actor }}
         run: |
-          echo "AI PR Review workflow placeholder."
-          echo "The production workflow is being tested in a feature branch."
+          set -e
+
+          HTTP_STATUS=$(gh api \
+            "/repos/${GITHUB_REPOSITORY}/collaborators/${AUTHOR}/permission" \
+            -o /dev/null \
+            -w '%{http_code}' 2>/dev/null || true)
+          PERMISSION=$(gh api \
+            "/repos/${GITHUB_REPOSITORY}/collaborators/${AUTHOR}/permission" \
+            --jq '.permission // empty' 2>/dev/null || true)
+
+          if [ "${HTTP_STATUS}" = "404" ]; then
+            {
+              echo "permission=none"
+              echo "api_error=false"
+              echo "authorized=false"
+              echo "debug_reason=User is not a collaborator on this repository."
+            } >> "$GITHUB_OUTPUT"
+
+            echo "User is not a collaborator on this repository."
+
+          elif [ -z "$PERMISSION" ]; then
+            {
+              echo "permission=error"
+              echo "api_error=true"
+              echo "authorized=false"
+              echo "debug_reason=Failed to query collaborator permission (API error)."
+            } >> "$GITHUB_OUTPUT"
+
+            echo "Failed to query collaborator permission (API error)."
+
+          else
+            {
+              echo "permission=${PERMISSION}"
+              echo "api_error=false"
+            } >> "$GITHUB_OUTPUT"
+
+            case "$PERMISSION" in
+              admin|maintain|push|triage)
+                {
+                  echo "authorized=true"
+                  echo "debug_reason=User has sufficient repository access."
+                } >> "$GITHUB_OUTPUT"
+
+                echo "User has sufficient repository access."
+                ;;
+
+              *)
+                {
+                  echo "authorized=false"
+                  echo "debug_reason=User does not have permission to request an AI review."
+                } >> "$GITHUB_OUTPUT"
+
+                echo "User does not have permission to request an AI review."
+                ;;
+            esac
+          fi
+      - name: Notify commenter of API error
+        if: ${{ steps.permission.outputs.api_error == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          AUTHOR: ${{ github.event.comment.user.login || github.actor }}
+          DEBUG_REASON: ${{ steps.permission.outputs.debug_reason }}
+        run: |
+            echo "DEBUG: /ai-review skipped because ${DEBUG_REASON}" >&2
+            printf '%s\n' \
+              "@${AUTHOR}, your /ai-review request could not be processed" \
+              "because the server could not verify repository permissions due to an API error." \
+              "Please try again. If the problem persists, contact a repository administrator." \
+              > comment-body.txt
+
+            gh pr comment "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body-file comment-body.txt
+
+      - name: Notify commenter of insufficient permissions
+        if: ${{ steps.permission.outputs.api_error == 'false' && steps.permission.outputs.authorized == 'false' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          AUTHOR: ${{ github.event.comment.user.login || github.actor }}
+          DEBUG_REASON: ${{ steps.permission.outputs.debug_reason }}
+        run: |
+            echo "DEBUG: /ai-review skipped because ${DEBUG_REASON}" >&2
+            printf '%s\n' \
+              "@${AUTHOR}, your /ai-review request could not be processed" \
+              "because you do not have sufficient repository permissions." \
+              "Please ask a repository administrator, maintainer, or" \
+              "collaborator with write access to request the review." \
+              > comment-body.txt
+
+            gh pr comment "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body-file comment-body.txt
+
+      - name: Check Copilot token
+        id: check-token-manual
+        if: ${{ steps.permission.outputs.authorized == 'true' }}
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+        run: |
+          if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
+            {
+              echo "COPILOT_TOKEN not configured; skipping AI review."
+              echo "skip=true"
+              echo "debug_reason=Missing COPILOT_TOKEN repository secret."
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "skip=false"
+              echo "debug_reason=Copilot token is configured."
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notify about missing Copilot token
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          AUTHOR: ${{ github.event.comment.user.login || github.actor }}
+          DEBUG_REASON: ${{ steps.check-token-manual.outputs.debug_reason }}
+        run: |
+          echo "DEBUG: /ai-review skipped because ${DEBUG_REASON}" >&2
+          printf '%s\n' \
+            "@${AUTHOR}, AI review was skipped because the repository secret COPILOT_TOKEN is not configured." \
+            "Add the secret and request another review." \
+            > comment-body.txt
+
+          gh pr comment "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file comment-body.txt
+
+      - name: Check PR source repository
+        id: pr-source
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+        run: |
+          set -e
+
+          HEAD_REPO=$(gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json headRepository \
+            --jq '.headRepository.nameWithOwner' 2>/dev/null || true)
+
+          if [ -z "$HEAD_REPO" ]; then
+            {
+              echo "same_repo=false"
+              echo "debug_reason=Could not determine the PR head repository."
+            } >> "$GITHUB_OUTPUT"
+
+            echo "Could not determine the PR head repository."
+            exit 0
+          fi
+
+          if [ "$HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            {
+              echo "same_repo=true"
+              echo "debug_reason=Reviewing a same-repository PR only."
+            } >> "$GITHUB_OUTPUT"
+
+            echo "Reviewing a same-repository PR only."
+
+          else
+            {
+              echo "same_repo=false"
+              echo "debug_reason=PR head repository: ${HEAD_REPO}."
+            } >> "$GITHUB_OUTPUT"
+
+            echo "PR head repository: ${HEAD_REPO}"
+            echo "Skipping untrusted fork PRs."
+          fi
+
+      - name: Notify commenter of forked PR restriction
+        if: ${{ steps.permission.outputs.authorized == 'true' && steps.check-token-manual.outputs.skip != 'true' && steps.pr-source.outputs.same_repo == 'false' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
+          AUTHOR: ${{ github.event.comment.user.login || github.actor }}
+          DEBUG_REASON: ${{ steps.pr-source.outputs.debug_reason }}
+        run: |
+            echo "DEBUG: /ai-review skipped because ${DEBUG_REASON}" >&2
+            printf '%s\n' \
+              "@${AUTHOR}, /ai-review is only available for pull requests from this repository." \
+              "Forked PRs are skipped to avoid running untrusted code with repository credentials." \
+              > comment-body.txt
+
+            gh pr comment "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body-file comment-body.txt
+
+      - name: Set job outputs
+        id: set-job-outputs
+        env:
+          AUTHORIZED: ${{ steps.permission.outputs.authorized }}
+          SKIP: ${{ steps.check-token-manual.outputs.skip }}
+          SAME_REPO: ${{ steps.pr-source.outputs.same_repo }}
+        run: |
+          printf '%s\n%s\n%s\n%s\n%s\n' \
+            "pr_number=${PR_NUMBER}" \
+            "dry_run=${DRY_RUN}" \
+            "authorized=${AUTHORIZED}" \
+            "skip=${SKIP}" \
+            "same_repo=${SAME_REPO}" >> "$GITHUB_OUTPUT"
+  perform-ai-review:
+    name: Perform AI review
+    needs: manual-review
+    if: needs.manual-review.outputs.authorized == 'true' && needs.manual-review.outputs.skip != 'true' && needs.manual-review.outputs.same_repo == 'true'
+
+    uses: ./.github/workflows/run-ai-review.yml
+    with:
+      pr_number: ${{ needs.manual-review.outputs.pr_number }}
+      dry_run: ${{ needs.manual-review.outputs.dry_run }}
+      review_mode: manual
+    secrets:
+      COPILOT_TOKEN: ${{ secrets.COPILOT_TOKEN }}
