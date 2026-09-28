@@ -1,0 +1,234 @@
+---
+name: Run AI Review (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: 'Pull request number to review'
+        required: true
+        type: string
+      dry_run:
+        description: 'If true, do not post comments; upload review as artifact instead.'
+        required: false
+        type: string
+        default: 'false'
+      review_mode:
+        description: 'Review mode: "automatic" or "manual" (affects prompt wording)'
+        required: false
+        type: string
+        default: 'automatic'
+    secrets:
+      COPILOT_TOKEN:
+        description: 'GitHub token for Copilot API access'
+        required: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PR_NUMBER: ${{ inputs.pr_number }}
+  DRY_RUN: ${{ inputs.dry_run }}
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  run:
+    name: Run review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare PR metadata and diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "Fetching metadata for PR #${PR_NUMBER}..."
+
+          # Get the PR title.
+          gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json title \
+            --jq '.title' \
+            > pr-title.txt
+
+          if [ ! -s pr-title.txt ]; then
+            echo "::error::Unable to retrieve PR title for PR #${PR_NUMBER}."
+            exit 1
+          fi
+
+          # Get the list of changed files.
+          gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json files \
+            --jq '.files[].path' \
+            > changed-files.txt
+
+          if [ ! -s changed-files.txt ]; then
+            echo "::error::No changed files were retrieved for PR #${PR_NUMBER}."
+            exit 1
+          fi
+
+          # Get the complete PR diff.
+          gh pr diff "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            > pr.diff
+
+          if [ ! -s pr.diff ]; then
+            echo "::error::PR diff is empty or could not be retrieved for PR #${PR_NUMBER}."
+            exit 1
+          fi
+
+          echo "PR metadata and diff retrieved successfully."
+          echo "Changed files: $(wc -l < changed-files.txt)"
+          echo "Diff lines:     $(wc -l < pr.diff)"
+
+      - name: Build review prompt
+        env:
+          REVIEW_MODE: ${{ inputs.review_mode }}
+          PR_INPUT: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          PR_TITLE=$(cat pr-title.txt)
+
+          if [ "$REVIEW_MODE" = "manual" ]; then
+            printf '%s\n\n%s\n\n%s\n\n' \
+              "Perform a fresh code review of this FRC Java pull request." \
+              "The review is for high-school FRC programmers." \
+              "Focus on correctness, WPILib patterns, safety, and maintainability." \
+              > review-prompt.txt
+          else
+            printf '%s\n\n' \
+              "You are reviewing a pull request for an FRC robotics team." \
+              "This is an educational code review. Explain WHY issues matter; be actionable." \
+              > review-prompt.txt
+          fi
+
+          {
+            printf '%s\n\n' \
+              "PR NUMBER:" \
+              "$PR_INPUT"
+
+            printf '%s\n\n' \
+              "PR TITLE:" \
+              "$PR_TITLE"
+
+            printf '%s\n' \
+              "CHANGED FILES:"
+
+            cat changed-files.txt
+
+            printf '\n%s\n' \
+              "CURRENT PR DIFF:"
+
+            cat pr.diff
+          } >> review-prompt.txt
+
+      - name: Install GitHub Copilot CLI
+        run: |
+          set -euo pipefail
+          npm install -g @github/copilot@1.0.88
+
+      - name: Run Copilot review
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "Running Copilot review..."
+
+          # Pipe the prompt through stdin rather than passing the entire
+          # prompt as a command-line argument. This avoids ARG_MAX limits
+          # on large pull requests.
+          copilot \
+            -s \
+            --no-ask-user \
+            --allow-tool='shell(git:status)' \
+            < review-prompt.txt \
+            > review.md
+
+          if [ ! -s review.md ]; then
+            echo "::error::Copilot completed without generating a review."
+            exit 1
+          fi
+
+          echo "Copilot review generated successfully."
+          echo "Review lines: $(wc -l < review.md)"
+
+      - name: Post review to PR
+        if: ${{ inputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_ENV: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -s review.md ]; then
+            echo "::error::No review was generated; cannot post comment."
+            exit 1
+          fi
+
+          gh pr comment "$PR_ENV" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file review.md
+
+      - name: Post manual review instructions
+        if: ${{ inputs.dry_run != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_ENV: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          MARKER="<!-- ai-review-manual-instructions -->"
+
+          echo "Checking whether the manual AI review instructions already exist..."
+
+          if gh pr view "$PR_ENV" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json comments \
+              --jq '.comments[].body' \
+              | grep -Fq "$MARKER"; then
+
+            echo "Manual AI review instructions already posted; skipping."
+            exit 0
+          fi
+
+          echo "Posting manual AI review instructions..."
+
+          cat > manual-review-instructions.md <<'EOF'
+          <!-- ai-review-manual-instructions -->
+
+          🔄 **Want to run the AI reviewer again?**
+
+          Add this comment to the PR:
+
+          `/ai-review`
+
+          This will run a fresh review against the current PR.
+          EOF
+
+          gh pr comment "$PR_ENV" \
+            --repo "$GITHUB_REPOSITORY" \
+            --body-file manual-review-instructions.md
+
+      - name: Upload final review artifact
+        if: ${{ inputs.dry_run == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-review
+          path: review.md
+
+      - name: Fail if the build failed
+        if: ${{ always() && env.BUILD_FAILED == 'true' }}
+        run: exit 1
+
