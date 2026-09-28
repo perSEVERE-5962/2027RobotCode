@@ -42,29 +42,6 @@ permissions:
 
 jobs:
 
-  debug-trigger:
-    name: Debug Trigger
-    if: ${{ github.event_name == 'issue_comment' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Dump issue_comment payload
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_ACTION: ${{ github.event.action }}
-          COMMENT_BODY: ${{ github.event.comment.body }}
-          COMMENTER: ${{ github.event.comment.user.login }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_PULL_REQUEST: "${{ github.event.issue.pull_request != null }}"
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          echo "DEBUG: event_name=${EVENT_NAME}"
-          echo "DEBUG: action=${EVENT_ACTION}"
-          echo "DEBUG: issue_number=${ISSUE_NUMBER}"
-          echo "DEBUG: issue_pull_request=${ISSUE_PULL_REQUEST}"
-          echo "DEBUG: repository=${REPOSITORY}"
-          echo "DEBUG: commenter=${COMMENTER}"
-          echo "DEBUG: comment_body=${COMMENT_BODY}"
-
   # ---------------------------------------------------------------------------
   # Automatic review when a PR is opened or updated
   # ---------------------------------------------------------------------------
@@ -274,7 +251,7 @@ jobs:
               echo "same_repo=false"
               echo "debug_reason=Could not determine the PR head repository."
             } >> "$GITHUB_OUTPUT"
-            
+
             echo "Could not determine the PR head repository."
             exit 0
           fi
@@ -340,5 +317,3 @@ jobs:
       review_mode: manual
     secrets:
       COPILOT_TOKEN: ${{ secrets.COPILOT_TOKEN }}
-
-
