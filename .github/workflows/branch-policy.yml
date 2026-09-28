@@ -2,7 +2,7 @@ name: Branch Policy
 
 on:
   pull_request:
-    types: 
+    types:
       - assigned
       - opened
       - synchronize
@@ -11,7 +11,7 @@ on:
 
 permissions:
   contents: read
-  
+
 jobs:
   branch-policy:
     name: Branch Policy
@@ -19,12 +19,15 @@ jobs:
 
     steps:
       - name: Enforce branch flow
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          echo "Source: ${{ github.head_ref }}"
-          echo "Target: ${{ github.base_ref }}"
+          echo "Source: $HEAD_REF"
+          echo "Target: $BASE_REF"
 
-          if [[ "${{ github.base_ref }}" == "main" && \
-                "${{ github.head_ref }}" != "integration" ]]; then
+          if [[ "$BASE_REF" == "main" && \
+                "$HEAD_REF" != "integration" ]]; then
             echo "❌ Only integration can merge into main."
             exit 1
           fi
